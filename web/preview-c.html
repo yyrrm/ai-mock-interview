@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>디자인 C · 현재+디테일 — AI 모의면접</title>
+<link rel="stylesheet" as="style" crossorigin
+  href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+<style>
+:root{
+  --indigo:#6366f1; --indigo-600:#4f46e5; --violet:#8b5cf6; --cyan:#22d3ee;
+  --grad:linear-gradient(135deg,#6366f1,#8b5cf6 55%,#22d3ee);
+  --grad-soft:linear-gradient(135deg,#6366f1,#8b5cf6);
+  --bg:#f6f7fb; --soft:#eef0f7; --card:#fff; --ink:#11131c; --ink-soft:#5b6172; --ink-faint:#8b90a0; --line:#e9ebf2;
+  --radius:18px; --shadow:0 10px 30px -10px rgba(17,19,28,.15); --shadow-lg:0 28px 60px -22px rgba(79,70,229,.3);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:"Pretendard",system-ui,sans-serif;background:var(--bg);color:var(--ink);
+  line-height:1.6;letter-spacing:-.01em;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+a{color:inherit;text-decoration:none}
+.svg-ico{width:24px;height:24px;display:block}
+.svg-ico svg{width:100%;height:100%}
+
+.pv-switch{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);z-index:999;display:flex;gap:6px;
+  background:#fff;border:1px solid var(--line);padding:7px;border-radius:100px;box-shadow:0 16px 40px -12px rgba(17,19,28,.25)}
+.pv-switch a{padding:8px 16px;border-radius:100px;font-size:13px;font-weight:700;color:var(--ink-soft)}
+.pv-switch a.on{background:var(--grad-soft);color:#fff}
+.pv-switch a:not(.on):hover{background:var(--soft)}
+
+.hd{position:sticky;top:0;z-index:100;background:rgba(255,255,255,.72);backdrop-filter:saturate(180%) blur(18px);border-bottom:1px solid rgba(233,235,242,.8)}
+.hd .in{max-width:1120px;margin:0 auto;padding:14px 24px;display:flex;align-items:center;justify-content:space-between}
+.logo{font-weight:800;font-size:19px;display:flex;align-items:center;gap:9px;letter-spacing:-.02em}
+.logo .mark{width:30px;height:30px;border-radius:9px;background:var(--grad);display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px;font-weight:900;box-shadow:0 6px 16px -4px rgba(99,102,241,.6)}
+.nav{display:flex;align-items:center;gap:4px}
+.nav a{padding:9px 14px;border-radius:10px;font-size:14.5px;font-weight:600;color:var(--ink-soft);transition:.18s}
+.nav a:hover{background:var(--soft);color:var(--ink)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:12px 22px;border-radius:12px;border:none;
+  font-size:15px;font-weight:700;font-family:inherit;cursor:pointer;transition:transform .12s,box-shadow .2s,background .2s;letter-spacing:-.01em}
+.btn-primary{background:var(--grad-soft);color:#fff;box-shadow:0 10px 24px -8px rgba(99,102,241,.7)}
+.btn-primary:hover{transform:translateY(-2px);box-shadow:0 16px 34px -8px rgba(99,102,241,.85)}
+.btn-ghost{background:rgba(255,255,255,.06);color:var(--indigo-600);border:1.5px solid var(--line)}
+.btn-ghost:hover{border-color:var(--indigo);background:rgba(99,102,241,.05)}
+.btn-lg{padding:15px 28px;font-size:16px;border-radius:14px}
+.nav .btn{padding:9px 18px;font-size:14.5px}
+
+/* 히어로 (다크 유지 + 강화) */
+.hero{position:relative;overflow:hidden;background:#0a0c16;color:#fff;text-align:center;padding:104px 24px 200px;isolation:isolate}
+.hero::before,.hero::after{content:"";position:absolute;border-radius:50%;filter:blur(95px);z-index:-1;opacity:.55;animation:fl 14s ease-in-out infinite}
+.hero::before{width:540px;height:540px;background:radial-gradient(circle,#6366f1,transparent 70%);top:-190px;left:-120px}
+.hero::after{width:480px;height:480px;background:radial-gradient(circle,#22d3ee,transparent 70%);bottom:40px;right:-110px;animation-delay:-6s}
+@keyframes fl{0%,100%{transform:translate(0,0)}50%{transform:translate(30px,-30px)}}
+.grid-bg{position:absolute;inset:0;z-index:-2;
+  background-image:linear-gradient(rgba(255,255,255,.04) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.04) 1px,transparent 1px);
+  background-size:52px 52px;mask-image:radial-gradient(ellipse 65% 55% at 50% 0%,#000 35%,transparent 72%)}
+.badge{display:inline-flex;align-items:center;gap:8px;padding:7px 16px;border-radius:100px;background:rgba(255,255,255,.08);
+  border:1px solid rgba(255,255,255,.14);font-size:13.5px;font-weight:600;color:#c7d2fe;margin-bottom:26px}
+.badge .dot{width:7px;height:7px;border-radius:50%;background:#67e8f9;box-shadow:0 0 10px #67e8f9}
+.hero h1{font-size:57px;font-weight:800;line-height:1.16;letter-spacing:-.032em;margin-bottom:22px}
+.hero h1 .g{background:linear-gradient(120deg,#818cf8,#c4b5fd 40%,#67e8f9);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.hero p{font-size:19px;color:#aab0c5;max-width:580px;margin:0 auto 36px;line-height:1.65}
+.hero p strong{color:#fff;font-weight:700}
+.actions{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+.hero .btn-ghost{color:#fff;border-color:rgba(255,255,255,.25);background:rgba(255,255,255,.06)}
+.hero .btn-ghost:hover{background:rgba(255,255,255,.12)}
+.mock{max-width:780px;margin:58px auto -150px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);
+  border-radius:20px;padding:16px;backdrop-filter:blur(10px);box-shadow:0 50px 90px -25px rgba(0,0,0,.65),inset 0 1px 0 rgba(255,255,255,.07)}
+.mock .top{display:flex;gap:6px;padding:6px 8px 12px}
+.mock .top i{width:11px;height:11px;border-radius:50%;background:rgba(255,255,255,.22)}
+.mock .scr{background:linear-gradient(160deg,#12152400,#1a1f38);border-radius:12px;display:grid;grid-template-columns:1.6fr 1fr;gap:12px;padding:16px}
+.mock .cam{aspect-ratio:16/10;border-radius:10px;background:linear-gradient(135deg,#1e2440,#2a3160);display:flex;align-items:center;justify-content:center;color:#7c84b0}
+.mock .cam .svg-ico{width:40px;height:40px;opacity:.7}
+.mock .panel{display:flex;flex-direction:column;gap:11px;justify-content:center}
+.mock .row span{font-size:11px;color:#8b93b5}
+.mock .mb{height:7px;background:rgba(255,255,255,.1);border-radius:4px;margin-top:4px;overflow:hidden}
+.mock .mb i{display:block;height:100%;background:var(--grad);border-radius:4px}
+
+/* 섹션 (라이트) */
+.sec{max-width:1120px;margin:0 auto;padding:100px 24px 0}
+.sec.first{padding-top:200px}
+.eye{text-align:center;color:var(--indigo-600);font-weight:700;font-size:13.5px;letter-spacing:.06em;margin-bottom:11px}
+.head{text-align:center;font-size:35px;font-weight:800;letter-spacing:-.025em;margin-bottom:14px}
+.sub{text-align:center;color:var(--ink-soft);font-size:17px;margin:0 auto 46px;max-width:560px}
+.feats{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px}
+.feat{position:relative;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:30px;transition:.25s}
+.feat::after{content:"";position:absolute;left:0;top:0;height:3px;width:0;border-radius:3px 3px 0 0;background:var(--grad);transition:.3s}
+.feat:hover{transform:translateY(-5px);box-shadow:var(--shadow);border-color:rgba(99,102,241,.28)}
+.feat:hover::after{width:100%}
+.feat .ic{width:54px;height:54px;border-radius:15px;background:linear-gradient(135deg,rgba(99,102,241,.14),rgba(34,211,238,.12));
+  color:var(--indigo-600);display:flex;align-items:center;justify-content:center;margin-bottom:18px;box-shadow:inset 0 0 0 1px rgba(99,102,241,.12)}
+.feat h3{font-size:18px;margin-bottom:8px}
+.feat p{font-size:14.5px;color:var(--ink-soft)}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px}
+.step{position:relative;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:30px;overflow:hidden}
+.step .wm{position:absolute;right:14px;bottom:-14px;font-size:90px;font-weight:900;line-height:1;color:rgba(99,102,241,.06)}
+.step .n{width:36px;height:36px;border-radius:11px;background:var(--grad-soft);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center;margin-bottom:15px}
+.step h4{font-size:18px;margin-bottom:8px}
+.step p{font-size:14.5px;color:var(--ink-soft)}
+.cta{max-width:1120px;margin:100px auto 0;padding:0 24px}
+.cta .box{position:relative;overflow:hidden;text-align:center;border-radius:26px;padding:66px 24px;background:var(--grad);color:#fff;box-shadow:var(--shadow-lg)}
+.cta h2{font-size:33px;font-weight:800;letter-spacing:-.02em;margin-bottom:24px}
+.cta .btn{background:#fff;color:var(--indigo-600)}
+.ft{text-align:center;color:var(--ink-faint);font-size:13.5px;padding:60px 24px 110px}
+@media(max-width:560px){.hero h1{font-size:40px}.head{font-size:28px}}
+</style>
+</head>
+<body>
+<div class="pv-switch">
+  <a href="preview-a.html">A · 모던 테크</a>
+  <a href="preview-b.html">B · 클린 코퍼레이트</a>
+  <a href="preview-c.html" class="on">C · 현재+디테일</a>
+</div>
+
+<header class="hd"><div class="in">
+  <a class="logo"><span class="mark">AI</span> 모의면접</a>
+  <nav class="nav">
+    <a href="#feat">기능</a><a href="#how">진행 방식</a><a href="#">로그인</a>
+    <a class="btn btn-primary" href="#">시작하기</a>
+  </nav>
+</div></header>
+
+<section class="hero">
+  <div class="grid-bg"></div>
+  <span class="badge"><span class="dot"></span> AI 기반 비대면 면접 코칭</span>
+  <h1>합격에 가까워지는<br /><span class="g">AI 모의면접</span></h1>
+  <p><strong>내 이력서로 만드는 맞춤 질문</strong>에, 답변에 따라 꼬리질문까지 —
+     실전과 똑같이 연습하세요. 자세·시선·표정·음성을 실시간 분석해 합격에 필요한 점만 짚어드립니다.</p>
+  <div class="actions">
+    <a class="btn btn-primary btn-lg" href="#">무료로 시작하기 →</a>
+    <a class="btn btn-ghost btn-lg" href="#">로그인</a>
+  </div>
+  <div class="mock">
+    <div class="top"><i></i><i></i><i></i></div>
+    <div class="scr">
+      <div class="cam"><span class="svg-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg></span></div>
+      <div class="panel">
+        <div class="row"><span>자세 82</span><div class="mb"><i style="width:82%"></i></div></div>
+        <div class="row"><span>시선 76</span><div class="mb"><i style="width:76%"></i></div></div>
+        <div class="row"><span>표정 88</span><div class="mb"><i style="width:88%"></i></div></div>
+        <div class="row"><span>음성 79</span><div class="mb"><i style="width:79%"></i></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sec first" id="feat">
+  <div class="eye">WHAT WE DO</div>
+  <h2 class="head">이력서 맞춤 질문부터 비언어적 태도까지</h2>
+  <p class="sub">내 이력서에 맞춘 질문을 받고, 말의 내용뿐 아니라 태도까지 종합 평가합니다.</p>
+  <div class="feats">
+    <div class="feat"><div class="ic"><span class="svg-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z"/><path d="M9 13h6M9 17h6"/></svg></span></div><h3>이력서 맞춤 질문</h3><p>이력서(PDF)를 분석해 내 경험·기술에 맞는 질문을 AI가 생성합니다.</p></div>
+    <div class="feat"><div class="ic"><span class="svg-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span></div><h3>이어지는 꼬리질문</h3><p>실제 면접관처럼, 내 답변에 따라 더 깊이 파고드는 다음 질문을 만듭니다.</p></div>
+    <div class="feat"><div class="ic"><span class="svg-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2.6"/><path d="M12 8v7"/><path d="M7 12h10"/><path d="M8.5 21L12 15.5 15.5 21"/></svg></span></div><h3>자세 분석</h3><p>불필요한 움직임을 감지해 안정적인 자세를 코칭합니다.</p></div>
+    <div class="feat"><div class="ic"><span class="svg-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg></span></div><h3>시선 추적</h3><p>카메라(면접관) 응시 비율과 시선 이탈 습관을 분석합니다.</p></div>
+    <div class="feat"><div class="ic"><span class="svg-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><path d="M9 9h.01M15 9h.01"/></svg></span></div><h3>표정 인식</h3><p>감정과 미세 표정을 읽어 인상 관리를 돕습니다.</p></div>
+    <div class="feat"><div class="ic"><span class="svg-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></svg></span></div><h3>음성 · 발화</h3><p>답변을 텍스트로 변환해 전달력과 명료성을 평가합니다.</p></div>
+  </div>
+</section>
+
+<section class="sec" id="how">
+  <div class="eye">HOW IT WORKS</div>
+  <h2 class="head">3단계로 끝나는 면접 연습</h2>
+  <p class="sub">복잡한 설정 없이, 가입하고 바로 시작하세요.</p>
+  <div class="steps">
+    <div class="step"><span class="wm">1</span><div class="n">1</div><h4>이력서 업로드 & 시작</h4><p>이력서(PDF)를 올리면 AI가 분석해 맞춤 질문을 던집니다. (없이도 가능)</p></div>
+    <div class="step"><span class="wm">2</span><div class="n">2</div><h4>실시간 분석</h4><p>자세·시선·표정·음성이 실시간으로 평가됩니다.</p></div>
+    <div class="step"><span class="wm">3</span><div class="n">3</div><h4>결과 확인</h4><p>종합 점수와 분야별 피드백을 기록으로 받아봅니다.</p></div>
+  </div>
+</section>
+
+<section class="cta"><div class="box">
+  <h2>지금 바로 면접 실력을 점검해보세요</h2>
+  <a class="btn btn-lg" href="#">무료로 시작하기</a>
+</div></section>
+
+<footer class="ft">© 2026 AI 모의면접 · 졸업작품 데모</footer>
+</body>
+</html>

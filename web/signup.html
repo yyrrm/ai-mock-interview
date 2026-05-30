@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>회원가입 · AI 모의면접</title>
+  <link rel="stylesheet" as="style" crossorigin
+    href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <header id="appHeader"></header>
+
+  <main class="container narrow" style="padding-top:48px;">
+    <div class="card reveal">
+      <div class="auth-icon">✍️</div>
+      <div style="text-align:center;margin-bottom:24px;">
+        <h2 style="font-size:24px;font-weight:800;">회원가입</h2>
+        <p style="color:var(--ink-soft);font-size:14.5px;margin-top:4px;">아이디, 비밀번호, 닉네임만 있으면 됩니다.</p>
+      </div>
+
+      <div class="form-error" id="err"></div>
+
+      <form id="signupForm">
+        <div class="form-group">
+          <label for="username">아이디</label>
+          <input type="text" id="username" placeholder="4자 이상" autocomplete="username" />
+        </div>
+        <div class="form-group">
+          <label for="nickname">닉네임</label>
+          <input type="text" id="nickname" placeholder="면접에서 표시될 이름" />
+        </div>
+        <div class="form-group">
+          <label for="password">비밀번호</label>
+          <input type="password" id="password" placeholder="4자 이상" autocomplete="new-password" />
+        </div>
+        <div class="form-group">
+          <label for="password2">비밀번호 확인</label>
+          <input type="password" id="password2" placeholder="비밀번호 재입력" autocomplete="new-password" />
+          <p class="form-hint">※ 전화번호 본인인증은 데모 단계라 생략합니다.</p>
+        </div>
+        <button type="submit" class="btn btn-primary btn-block btn-lg">가입하기</button>
+      </form>
+
+      <p class="form-hint" style="text-align:center;margin-top:18px;">
+        이미 계정이 있으신가요? <a href="login.html" style="color:var(--primary);font-weight:700;">로그인</a>
+      </p>
+    </div>
+  </main>
+
+  <footer class="app-footer">© 2026 AI 모의면접 · 졸업작품 데모</footer>
+
+  <script src="js/common.js"></script>
+  <script src="js/auth.js"></script>
+  <script>
+    document.getElementById("signupForm").addEventListener("submit", (e) => {
+      e.preventDefault();
+      const err = document.getElementById("err");
+      const res = signup({
+        username: document.getElementById("username").value,
+        password: document.getElementById("password").value,
+        password2: document.getElementById("password2").value,
+        nickname: document.getElementById("nickname").value,
+      });
+      if (!res.ok) {
+        err.textContent = res.msg;
+        return;
+      }
+      toast("회원가입 완료! 로그인해주세요 🎉");
+      setTimeout(() => (location.href = "login.html"), 900);
+    });
+  </script>
+</body>
+</html>

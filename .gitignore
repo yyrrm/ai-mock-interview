@@ -1,0 +1,32 @@
+# ===== 가상환경 / 의존성 =====
+.venv/
+venv/
+env/
+
+# ===== 비밀정보 (절대 커밋 금지) =====
+.env
+*.env
+key.json
+*/key.json
+*credentials*
+*service_account*
+*.pem
+
+# ===== 파이썬 캐시 =====
+__pycache__/
+*.pyc
+*.pyo
+
+# ===== 임시/생성 파일 =====
+temp.wav
+exp_*.jpg
+*.tmp
+
+# ===== OS / 에디터 =====
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ===== Claude Code 로컬 설정 =====
+.claude/settings.local.json

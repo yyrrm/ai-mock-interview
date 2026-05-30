@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>면접 결과 · AI 모의면접</title>
+  <link rel="stylesheet" as="style" crossorigin
+    href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <header id="appHeader"></header>
+
+  <main class="container">
+    <div class="page-head reveal">
+      <div>
+        <h2>면접 결과</h2>
+        <p id="dateText"></p>
+      </div>
+      <a class="btn btn-light" href="history.html">← 기록 목록</a>
+    </div>
+
+    <div id="content"></div>
+  </main>
+
+  <footer class="app-footer">© 2026 AI 모의면접 · 졸업작품 데모</footer>
+
+  <script src="js/common.js"></script>
+  <script src="js/data.js"></script>
+  <script>
+    requireLogin();
+
+    const params = new URLSearchParams(location.search);
+    const id = params.get("id");
+    const r = id ? getRecordById(id) : null;
+    const content = document.getElementById("content");
+
+    function grade(score) {
+      if (score >= 90) return "최상위권 · Excellent";
+      if (score >= 80) return "우수 · Great";
+      if (score >= 70) return "양호 · Good";
+      if (score >= 60) return "보통 · Fair";
+      return "개선 필요 · Needs Work";
+    }
+    function barColor(s) { return s >= 80 ? "#10b981" : s >= 60 ? "#f59e0b" : "#ef4444"; }
+
+    // ---- SVG 레이더 차트 ----
+    function radarChart(scores) {
+      const cx = 140, cy = 140, R = 95;
+      const axes = [
+        { name: "자세", angle: -90, val: scores.자세 },
+        { name: "시선", angle: 0, val: scores.시선 },
+        { name: "표정", angle: 90, val: scores.표정 },
+        { name: "음성", angle: 180, val: scores.음성 },
+      ];
+      const pt = (pct, ang) => {
+        const a = (ang * Math.PI) / 180;
+        const rr = (R * pct) / 100;
+        return [cx + rr * Math.cos(a), cy + rr * Math.sin(a)];
+      };
+      const poly = (pct) => axes.map((ax) => pt(pct, ax.angle).join(",")).join(" ");
+
+      // 격자
+      let grid = "";
+      [25, 50, 75, 100].forEach((lv) => {
+        grid += `<polygon points="${poly(lv)}" fill="none" stroke="#e9ebf2" stroke-width="1"/>`;
+      });
+      // 축선
+      let spokes = "";
+      axes.forEach((ax) => {
+        const [x, y] = pt(100, ax.angle);
+        spokes += `<line x1="${cx}" y1="${cy}" x2="${x}" y2="${y}" stroke="#e9ebf2" stroke-width="1"/>`;
+      });
+      // 데이터 폴리곤
+      const dataPts = axes.map((ax) => pt(ax.val, ax.angle).join(",")).join(" ");
+      // 라벨 + 꼭짓점
+      let labels = "", dots = "";
+      axes.forEach((ax) => {
+        const [lx, ly] = pt(122, ax.angle);
+        const anchor = ax.angle === 0 ? "start" : ax.angle === 180 ? "end" : "middle";
+        const dy = ax.angle === -90 ? -2 : ax.angle === 90 ? 12 : 4;
+        labels += `<text x="${lx}" y="${ly + dy}" text-anchor="${anchor}" font-size="13" font-weight="700" fill="#5b6172">${ax.name}</text>`;
+        labels += `<text x="${lx}" y="${ly + dy + 15}" text-anchor="${anchor}" font-size="12" font-weight="800" fill="#4f46e5">${ax.val}</text>`;
+        const [dx2, dy2] = pt(ax.val, ax.angle);
+        dots += `<circle cx="${dx2}" cy="${dy2}" r="3.5" fill="#6366f1"/>`;
+      });
+
+      return `
+        <svg width="280" height="280" viewBox="0 0 280 280">
+          <defs>
+            <linearGradient id="rg" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#6366f1" stop-opacity="0.45"/>
+              <stop offset="100%" stop-color="#22d3ee" stop-opacity="0.35"/>
+            </linearGradient>
+          </defs>
+          ${grid}${spokes}
+          <polygon points="${dataPts}" fill="url(#rg)" stroke="#6366f1" stroke-width="2.5"
+            style="transform-origin:${cx}px ${cy}px; animation: reveal 0.7s ease both;"/>
+          ${dots}${labels}
+        </svg>`;
+    }
+
+    if (!r) {
+      content.innerHTML = `
+        <div class="empty">
+          <div class="ico">❓</div>
+          <p>결과를 찾을 수 없습니다.</p>
+          <div style="margin-top:18px;"><a class="btn btn-primary" href="history.html">기록 목록으로</a></div>
+        </div>`;
+    } else {
+      document.getElementById("dateText").textContent = formatDate(r.date) + " 면접";
+      const cats = ["자세", "시선", "표정", "음성"];
+
+      content.innerHTML = `
+        <div class="card reveal">
+          <div class="result-top">
+            <div class="result-hero">
+              <div class="grade">${grade(r.scores.total)}</div>
+              <div class="result-total"><span id="totalNum">0</span><small>점</small></div>
+              <div class="score-badge ${scoreClass(r.scores.total)}" style="display:inline-block;margin-top:8px;font-size:14px;padding:6px 18px;">
+                종합 평가
+              </div>
+            </div>
+            <div class="radar-wrap">${radarChart(r.scores)}</div>
+          </div>
+          <div class="score-grid">
+            ${cats.map((c) => `
+              <div class="score-cell">
+                <div class="name">${c}</div>
+                <div class="val" style="color:${barColor(r.scores[c])}">${r.scores[c]}</div>
+              </div>`).join("")}
+          </div>
+        </div>
+
+        <div class="card reveal d1">
+          <div class="section-title">📋 분야별 피드백</div>
+          <ul class="feedback-list">
+            ${r.feedback.map((f) => `
+              <li><span class="fb-cat">${f.cat}</span><span>${escapeHtml(f.text)}</span></li>
+            `).join("")}
+          </ul>
+        </div>
+
+        <div class="card reveal d2">
+          <div class="section-title">💬 면접에서 받은 질문</div>
+          <ol style="padding-left:20px;line-height:2.1;color:var(--ink-soft);">
+            ${r.questions.map((q) => `<li><span style="color:var(--ink)">${escapeHtml(q)}</span></li>`).join("")}
+          </ol>
+        </div>
+
+        <div style="display:flex;gap:10px;margin-top:22px;">
+          <a class="btn btn-primary" href="interview.html">다시 면접 보기</a>
+          <a class="btn btn-light" href="dashboard.html">마이페이지</a>
+        </div>
+      `;
+
+      animateCount(document.getElementById("totalNum"), r.scores.total, "", 1100);
+    }
+  </script>
+</body>
+</html>

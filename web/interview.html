@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>면접 진행 · AI 모의면접</title>
+  <link rel="stylesheet" as="style" crossorigin
+    href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <header id="appHeader"></header>
+
+  <!-- ===== 이력서 업로드 게이트 (면접 시작 전) ===== -->
+  <div id="resumeGate" class="resume-gate">
+    <div class="resume-card reveal">
+      <div class="resume-ico">📄</div>
+      <h2>이력서로 맞춤 면접 시작</h2>
+      <p class="resume-desc">
+        이력서(PDF)를 업로드하면 AI가 내용을 분석해<br />
+        <strong>지원자에게 꼭 맞는 질문</strong>을 생성합니다.
+      </p>
+
+      <div class="resume-field">
+        <label for="topicInput">면접 주제 <span style="font-weight:400;color:var(--ink-soft)">(선택)</span></label>
+        <input id="topicInput" type="text" placeholder="예: 백엔드 개발 신입 공채" />
+      </div>
+
+      <label id="dropZone" class="drop-zone" for="resumeFile">
+        <input id="resumeFile" type="file" accept="application/pdf" hidden />
+        <span id="dropText">PDF 파일을 선택하거나 여기로 끌어다 놓으세요</span>
+      </label>
+
+      <div class="resume-actions">
+        <button class="btn btn-primary btn-lg" id="startWithResume" disabled>이력서로 면접 시작 ▶</button>
+        <button class="btn btn-ghost" id="startWithout">이력서 없이 시작</button>
+      </div>
+      <div id="resumeStatus" class="resume-status"></div>
+    </div>
+  </div>
+
+  <main class="container" id="interviewMain" style="display:none;">
+    <div class="page-head reveal">
+      <div>
+        <h2>면접 진행 중</h2>
+        <p>카메라를 정면으로 바라보고 또렷하게 답변해주세요. <strong style="color:var(--ink-soft)">(데모 화면 — 영상 분석 미연결)</strong></p>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;font-size:22px;font-weight:800;color:var(--indigo-600);">
+        ⏱ <span id="timer">00:00</span>
+      </div>
+    </div>
+
+    <!-- 이력서 분석 요약 배너 -->
+    <div id="resumeSummary" class="resume-summary card reveal" style="display:none;">
+      <span class="rs-badge">이력서 분석</span>
+      <span id="resumeSummaryText"></span>
+    </div>
+
+    <div class="interview-grid">
+      <!-- 카메라 영역 -->
+      <div class="reveal d1">
+        <div class="camera-box">
+          <div class="rec"><span class="blink"></span> REC</div>
+          <div class="ph-ico">🎥</div>
+          <div>카메라 화면이 여기에 표시됩니다</div>
+          <div style="font-size:13px;margin-top:4px;opacity:0.7;">(분석 모듈 연결 예정)</div>
+        </div>
+
+        <div class="question-box">
+          <div class="q-label">현재 질문</div>
+          <div class="q-text" id="question">질문을 불러오는 중...</div>
+        </div>
+
+        <div class="answer-box">
+          <label for="answerInput" class="q-label">내 답변 메모 <span style="font-weight:400;color:var(--ink-soft)">(선택 — 입력하면 다음 질문에 반영됩니다)</span></label>
+          <textarea id="answerInput" rows="3" placeholder="여기에 답변 요지를 적으면 AI가 이어서 더 깊은 질문을 만듭니다."></textarea>
+        </div>
+
+        <div class="interview-controls">
+          <button class="btn btn-light" id="nextBtn">다음 질문 ▶</button>
+          <button class="btn btn-ghost" id="calibBtn">시선 보정</button>
+          <button class="btn btn-danger" id="endBtn" style="margin-left:auto;">면접 종료</button>
+        </div>
+      </div>
+
+      <!-- 실시간 점수 패널 -->
+      <div class="card live-panel reveal d2">
+        <div class="section-title">📡 실시간 분석</div>
+        <div class="metric">
+          <div class="top"><span>자세</span><span class="pct" id="v-pose">-</span></div>
+          <div class="bar"><span id="b-pose" style="width:0%"></span></div>
+        </div>
+        <div class="metric">
+          <div class="top"><span>시선</span><span class="pct" id="v-gaze">-</span></div>
+          <div class="bar"><span id="b-gaze" style="width:0%"></span></div>
+        </div>
+        <div class="metric">
+          <div class="top"><span>표정</span><span class="pct" id="v-expr">-</span></div>
+          <div class="bar"><span id="b-expr" style="width:0%"></span></div>
+        </div>
+        <div class="metric">
+          <div class="top"><span>음성</span><span class="pct" id="v-voice">-</span></div>
+          <div class="bar"><span id="b-voice" style="width:0%"></span></div>
+        </div>
+        <p class="form-hint" style="margin-top:18px;">
+          ※ 영상/음성 점수는 데모용 수치입니다. 질문은 이력서·답변 기반으로 실제 생성됩니다.
+        </p>
+      </div>
+    </div>
+  </main>
+
+  <footer class="app-footer">© 2026 AI 모의면접 · 졸업작품 데모</footer>
+
+  <script src="js/common.js"></script>
+  <script src="js/data.js"></script>
+  <script>
+    requireLogin();
+
+    /* ===== 면접 상태 ===== */
+    const state = {
+      resumeText: "",       // 이력서 추출 텍스트 (질문 생성 맥락)
+      topic: "면접",
+      asked: [],            // 이미 한 질문들 (중복 방지)
+      currentQuestion: "",
+    };
+
+    let timerId = null;
+    let liveId = null;
+
+    /* ===== 이력서 게이트 ===== */
+    const gate = document.getElementById("resumeGate");
+    const fileInput = document.getElementById("resumeFile");
+    const dropZone = document.getElementById("dropZone");
+    const dropText = document.getElementById("dropText");
+    const startBtn = document.getElementById("startWithResume");
+    const skipBtn = document.getElementById("startWithout");
+    const statusEl = document.getElementById("resumeStatus");
+    const topicInput = document.getElementById("topicInput");
+
+    let pickedFile = null;
+
+    function setStatus(msg, kind = "") {
+      statusEl.textContent = msg || "";
+      statusEl.className = "resume-status" + (kind ? " " + kind : "");
+    }
+
+    fileInput.addEventListener("change", () => {
+      pickedFile = fileInput.files[0] || null;
+      if (pickedFile) {
+        dropText.textContent = "📎 " + pickedFile.name;
+        startBtn.disabled = false;
+        setStatus("");
+      }
+    });
+
+    // 드래그 앤 드롭
+    ["dragover", "dragenter"].forEach((ev) =>
+      dropZone.addEventListener(ev, (e) => { e.preventDefault(); dropZone.classList.add("over"); })
+    );
+    ["dragleave", "drop"].forEach((ev) =>
+      dropZone.addEventListener(ev, (e) => { e.preventDefault(); dropZone.classList.remove("over"); })
+    );
+    dropZone.addEventListener("drop", (e) => {
+      const f = e.dataTransfer.files[0];
+      if (f && f.type === "application/pdf") {
+        fileInput.files = e.dataTransfer.files;
+        fileInput.dispatchEvent(new Event("change"));
+      } else {
+        setStatus("PDF 파일만 업로드할 수 있습니다.", "err");
+      }
+    });
+
+    // 이력서로 시작
+    startBtn.addEventListener("click", async () => {
+      if (!pickedFile) return;
+      state.topic = (topicInput.value || "면접").trim() || "면접";
+
+      startBtn.disabled = true;
+      skipBtn.disabled = true;
+      setStatus("이력서를 분석하는 중입니다... (최대 10초)", "loading");
+
+      const fd = new FormData();
+      fd.append("resume", pickedFile);
+      fd.append("topic", state.topic);
+
+      try {
+        const res = await fetch("/api/resume", { method: "POST", body: fd });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.msg || "분석 실패");
+
+        state.resumeText = data.resume_text || "";
+        beginInterview(data.first_question, data.summary);
+      } catch (err) {
+        setStatus("오류: " + err.message, "err");
+        startBtn.disabled = false;
+        skipBtn.disabled = false;
+      }
+    });
+
+    // 이력서 없이 시작
+    skipBtn.addEventListener("click", () => {
+      state.topic = (topicInput.value || "면접").trim() || "면접";
+      beginInterview("간단히 자기소개 부탁드립니다.", "");
+    });
+
+    /* ===== 면접 시작 ===== */
+    function beginInterview(firstQuestion, summary) {
+      gate.style.display = "none";
+      document.getElementById("interviewMain").style.display = "";
+
+      // 이력서 요약 배너
+      if (summary) {
+        document.getElementById("resumeSummary").style.display = "";
+        document.getElementById("resumeSummaryText").textContent = summary;
+      }
+
+      setQuestion(firstQuestion);
+      startTimer();
+      startLive();
+    }
+
+    function setQuestion(q) {
+      state.currentQuestion = q;
+      if (!state.asked.includes(q)) state.asked.push(q);
+      document.getElementById("question").textContent = q;
+    }
+
+    /* ===== 타이머 ===== */
+    function startTimer() {
+      let sec = 0;
+      const timerEl = document.getElementById("timer");
+      timerId = setInterval(() => {
+        sec++;
+        const m = String(Math.floor(sec / 60)).padStart(2, "0");
+        const s = String(sec % 60).padStart(2, "0");
+        timerEl.textContent = `${m}:${s}`;
+      }, 1000);
+    }
+
+    /* ===== 가짜 실시간 점수 ===== */
+    function jitter(base) {
+      return Math.max(40, Math.min(99, base + Math.round((Math.random() - 0.5) * 12)));
+    }
+    const bases = { pose: 78, gaze: 72, expr: 80, voice: 75 };
+    function refreshLive() {
+      for (const k of Object.keys(bases)) {
+        const v = jitter(bases[k]);
+        document.getElementById("v-" + k).textContent = v;
+        document.getElementById("b-" + k).style.width = v + "%";
+      }
+    }
+    function startLive() {
+      refreshLive();
+      liveId = setInterval(refreshLive, 1200);
+    }
+
+    /* ===== 다음 질문 (이력서 + 답변 기반 생성) ===== */
+    const nextBtn = document.getElementById("nextBtn");
+    nextBtn.addEventListener("click", async () => {
+      const answerEl = document.getElementById("answerInput");
+      const answer = answerEl.value.trim();
+
+      nextBtn.disabled = true;
+      const original = nextBtn.textContent;
+      nextBtn.textContent = "질문 생성 중...";
+
+      try {
+        const res = await fetch("/api/question", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            answer_text: answer,
+            topic: state.topic,
+            previous_questions: state.asked,
+            resume_context: state.resumeText,
+          }),
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.msg || "생성 실패");
+
+        setQuestion(data.question);
+        answerEl.value = "";
+        toast("다음 질문으로 넘어갑니다", "▶");
+      } catch (err) {
+        toast("질문 생성 실패: " + err.message, "⚠");
+      } finally {
+        nextBtn.disabled = false;
+        nextBtn.textContent = original;
+      }
+    });
+
+    document.getElementById("calibBtn").addEventListener("click", () => {
+      toast("시선 중앙 보정 요청됨", "🎯");
+    });
+
+    /* ===== 면접 종료 ===== */
+    document.getElementById("endBtn").addEventListener("click", () => {
+      if (!confirm("면접을 종료하고 결과를 저장할까요?")) return;
+      clearInterval(timerId);
+      clearInterval(liveId);
+      const result = createMockResult();
+      // 실제로 진행한 질문들을 결과에 반영
+      if (state.asked.length) result.questions = state.asked.slice();
+      const id = addRecord(result);
+      location.href = "result.html?id=" + id;
+    });
+  </script>
+</body>
+</html>
