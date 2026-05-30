@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>마이페이지 · AI 모의면접</title>
+  <link rel="stylesheet" as="style" crossorigin
+    href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <header id="appHeader"></header>
+
+  <main class="container">
+    <div class="page-head reveal">
+      <div>
+        <h2 id="welcome">환영합니다 👋</h2>
+        <p>오늘도 면접 연습을 시작해볼까요?</p>
+      </div>
+      <a class="btn btn-primary btn-lg" href="interview.html">＋ 새 면접 시작</a>
+    </div>
+
+    <!-- 통계 -->
+    <div class="stat-row reveal d1">
+      <div class="stat-card">
+        <div class="label">총 면접 횟수</div>
+        <div class="value" id="statCount">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">평균 점수</div>
+        <div class="value" id="statAvg">-</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">최고 점수</div>
+        <div class="value" id="statBest">-</div>
+      </div>
+    </div>
+
+    <!-- 최근 기록 -->
+    <div style="margin-top:34px;" class="reveal d2">
+      <div class="page-head">
+        <h2 style="font-size:20px;">최근 면접 기록</h2>
+        <a href="history.html" style="color:var(--indigo-600);font-weight:700;">전체 보기 →</a>
+      </div>
+      <div id="recentList"></div>
+    </div>
+  </main>
+
+  <footer class="app-footer">© 2026 AI 모의면접 · 졸업작품 데모</footer>
+
+  <script src="js/common.js"></script>
+  <script src="js/data.js"></script>
+  <script>
+    const user = requireLogin();
+    if (user) {
+      document.getElementById("welcome").textContent = `${user.nickname}님, 환영합니다 👋`;
+
+      const records = getMyRecords();
+
+      animateCount(document.getElementById("statCount"), records.length);
+      if (records.length) {
+        const totals = records.map((r) => r.scores.total);
+        const avg = Math.round(totals.reduce((a, b) => a + b, 0) / totals.length);
+        animateCount(document.getElementById("statAvg"), avg, "점");
+        animateCount(document.getElementById("statBest"), Math.max(...totals), "점");
+      }
+
+      const list = document.getElementById("recentList");
+      const recent = records.slice(0, 3);
+      if (!recent.length) {
+        list.innerHTML = `
+          <div class="empty">
+            <div class="ico">📭</div>
+            <p>아직 면접 기록이 없습니다.<br />첫 모의면접을 시작해보세요!</p>
+          </div>`;
+      } else {
+        list.className = "record-list";
+        list.innerHTML = recent.map(recordRow).join("");
+      }
+    }
+
+    function recordRow(r) {
+      return `
+        <div class="record-item" onclick="location.href='result.html?id=${r.id}'">
+          <div class="meta">
+            <div class="date">${formatDate(r.date)}</div>
+            <div class="chips">
+              <span class="chip">자세 ${r.scores.자세}</span>
+              <span class="chip">시선 ${r.scores.시선}</span>
+              <span class="chip">표정 ${r.scores.표정}</span>
+              <span class="chip">음성 ${r.scores.음성}</span>
+            </div>
+          </div>
+          <div class="score-badge ${scoreClass(r.scores.total)}">
+            <span class="lbl">총점</span>${r.scores.total}
+          </div>
+        </div>`;
+    }
+  </script>
+</body>
+</html>

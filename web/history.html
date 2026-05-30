@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>면접 기록 · AI 모의면접</title>
+  <link rel="stylesheet" as="style" crossorigin
+    href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <header id="appHeader"></header>
+
+  <main class="container">
+    <div class="page-head reveal">
+      <div>
+        <h2>면접 기록</h2>
+        <p id="subText">지난 모의면접 결과를 확인하세요.</p>
+      </div>
+      <a class="btn btn-primary" href="interview.html">＋ 새 면접</a>
+    </div>
+
+    <div id="list" class="reveal d1"></div>
+  </main>
+
+  <footer class="app-footer">© 2026 AI 모의면접 · 졸업작품 데모</footer>
+
+  <script src="js/common.js"></script>
+  <script src="js/data.js"></script>
+  <script>
+    requireLogin();
+    const records = getMyRecords();
+    const list = document.getElementById("list");
+
+    document.getElementById("subText").textContent =
+      `총 ${records.length}회의 면접 기록이 있습니다.`;
+
+    if (!records.length) {
+      list.innerHTML = `
+        <div class="empty">
+          <div class="ico">📭</div>
+          <p>아직 면접 기록이 없습니다.<br />첫 모의면접을 시작해보세요!</p>
+          <div style="margin-top:18px;">
+            <a class="btn btn-primary" href="interview.html">면접 시작하기</a>
+          </div>
+        </div>`;
+    } else {
+      list.className = "record-list reveal d1";
+      list.innerHTML = records.map(recordRow).join("");
+    }
+
+    function recordRow(r) {
+      return `
+        <div class="record-item" onclick="location.href='result.html?id=${r.id}'">
+          <div class="meta">
+            <div class="date">${formatDate(r.date)}</div>
+            <div class="chips">
+              <span class="chip">질문 ${r.questions.length}개</span>
+              <span class="chip">자세 ${r.scores.자세}</span>
+              <span class="chip">시선 ${r.scores.시선}</span>
+              <span class="chip">표정 ${r.scores.표정}</span>
+              <span class="chip">음성 ${r.scores.음성}</span>
+            </div>
+          </div>
+          <div class="score-badge ${scoreClass(r.scores.total)}">
+            <span class="lbl">총점</span>${r.scores.total}
+          </div>
+        </div>`;
+    }
+  </script>
+</body>
+</html>

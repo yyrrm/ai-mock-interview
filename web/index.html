@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI 모의면접 · 실전처럼 연습하는 면접 코칭</title>
+  <link rel="stylesheet" as="style" crossorigin
+    href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <header id="appHeader"></header>
+
+  <main>
+    <!-- 히어로 -->
+    <section class="hero">
+      <span class="badge reveal">🤖 AI 기반 비대면 면접 코칭</span>
+      <h1 class="reveal d1">실전처럼 연습하는<br /><span class="grad">AI 모의면접</span></h1>
+      <p class="reveal d2">
+        카메라와 마이크만으로 자세 · 시선 · 표정 · 음성을 실시간 분석하고,
+        답변에 맞춰 AI가 다음 질문을 던집니다. 결과는 기록으로 남아 성장을 보여줍니다.
+      </p>
+      <div class="actions reveal d3">
+        <a class="btn btn-primary btn-lg" href="signup.html">무료로 시작하기 →</a>
+        <a class="btn btn-ghost btn-lg" href="login.html">로그인</a>
+      </div>
+
+      <!-- 미리보기 목업 -->
+      <div class="hero-mock reveal d3">
+        <div class="bar-top"><i></i><i></i><i></i></div>
+        <div class="screen">
+          <div class="cam">🎥</div>
+          <div class="stat">
+            <div class="row"><span>자세 82</span><div class="mini-bar"><i style="width:82%"></i></div></div>
+            <div class="row"><span>시선 76</span><div class="mini-bar"><i style="width:76%"></i></div></div>
+            <div class="row"><span>표정 88</span><div class="mini-bar"><i style="width:88%"></i></div></div>
+            <div class="row"><span>음성 79</span><div class="mini-bar"><i style="width:79%"></i></div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 분석 항목 -->
+    <section class="section">
+      <div class="section-eyebrow">WHAT WE ANALYZE</div>
+      <h2 class="section-head">면접의 모든 순간을 분석합니다</h2>
+      <p class="section-sub">말의 내용뿐 아니라 비언어적 태도까지 종합적으로 평가합니다.</p>
+      <div class="features">
+        <div class="feature">
+          <div class="ico">🧍</div>
+          <h3>자세 분석</h3>
+          <p>불필요한 움직임을 감지해 안정적인 자세를 코칭합니다.</p>
+        </div>
+        <div class="feature">
+          <div class="ico">👀</div>
+          <h3>시선 추적</h3>
+          <p>카메라(면접관) 응시 비율과 시선 이탈 습관을 분석합니다.</p>
+        </div>
+        <div class="feature">
+          <div class="ico">😊</div>
+          <h3>표정 인식</h3>
+          <p>감정과 미세 표정을 읽어 인상 관리를 돕습니다.</p>
+        </div>
+        <div class="feature">
+          <div class="ico">🎙️</div>
+          <h3>음성 · 발화</h3>
+          <p>답변을 텍스트로 변환해 전달력과 명료성을 평가합니다.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 진행 방식 -->
+    <section class="section tight">
+      <div class="section-eyebrow">HOW IT WORKS</div>
+      <h2 class="section-head">3단계로 끝나는 면접 연습</h2>
+      <p class="section-sub">복잡한 설정 없이, 가입하고 바로 시작하세요.</p>
+      <div class="steps">
+        <div class="step">
+          <div class="num">1</div>
+          <h4>면접 시작</h4>
+          <p>카메라를 켜고 AI가 던지는 질문에 자연스럽게 답변합니다.</p>
+        </div>
+        <div class="step">
+          <div class="num">2</div>
+          <h4>실시간 분석</h4>
+          <p>자세·시선·표정·음성이 실시간으로 평가됩니다.</p>
+        </div>
+        <div class="step">
+          <div class="num">3</div>
+          <h4>결과 확인</h4>
+          <p>종합 점수와 분야별 피드백을 기록으로 받아봅니다.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="cta-band">
+      <h2>지금 바로 면접 실력을 점검해보세요</h2>
+      <p>가입은 30초면 충분합니다. 전화번호 없이 시작하세요.</p>
+      <a class="btn btn-lg" href="signup.html">무료로 시작하기</a>
+    </section>
+  </main>
+
+  <footer class="app-footer">© 2026 AI 모의면접 · 졸업작품 데모</footer>
+
+  <script src="js/common.js"></script>
+  <script>
+    if (getSession()) location.href = "dashboard.html";
+  </script>
+</body>
+</html>

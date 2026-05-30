@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>면접 진행 · AI 모의면접</title>
+  <link rel="stylesheet" as="style" crossorigin
+    href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <header id="appHeader"></header>
+
+  <main class="container">
+    <div class="page-head reveal">
+      <div>
+        <h2>면접 진행 중</h2>
+        <p>카메라를 정면으로 바라보고 또렷하게 답변해주세요. <strong style="color:var(--ink-soft)">(데모 화면 — 실제 분석 미연결)</strong></p>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;font-size:22px;font-weight:800;color:var(--indigo-600);">
+        ⏱ <span id="timer">00:00</span>
+      </div>
+    </div>
+
+    <div class="interview-grid">
+      <!-- 카메라 영역 -->
+      <div class="reveal d1">
+        <div class="camera-box">
+          <div class="rec"><span class="blink"></span> REC</div>
+          <div class="ph-ico">🎥</div>
+          <div>카메라 화면이 여기에 표시됩니다</div>
+          <div style="font-size:13px;margin-top:4px;opacity:0.7;">(분석 모듈 연결 예정)</div>
+        </div>
+
+        <div class="question-box">
+          <div class="q-label">현재 질문</div>
+          <div class="q-text" id="question">간단히 자기소개 부탁드립니다.</div>
+        </div>
+
+        <div class="interview-controls">
+          <button class="btn btn-light" id="nextBtn">다음 질문 ▶</button>
+          <button class="btn btn-ghost" id="calibBtn">시선 보정</button>
+          <button class="btn btn-danger" id="endBtn" style="margin-left:auto;">면접 종료</button>
+        </div>
+      </div>
+
+      <!-- 실시간 점수 패널 -->
+      <div class="card live-panel reveal d2">
+        <div class="section-title">📡 실시간 분석</div>
+        <div class="metric">
+          <div class="top"><span>자세</span><span class="pct" id="v-pose">-</span></div>
+          <div class="bar"><span id="b-pose" style="width:0%"></span></div>
+        </div>
+        <div class="metric">
+          <div class="top"><span>시선</span><span class="pct" id="v-gaze">-</span></div>
+          <div class="bar"><span id="b-gaze" style="width:0%"></span></div>
+        </div>
+        <div class="metric">
+          <div class="top"><span>표정</span><span class="pct" id="v-expr">-</span></div>
+          <div class="bar"><span id="b-expr" style="width:0%"></span></div>
+        </div>
+        <div class="metric">
+          <div class="top"><span>음성</span><span class="pct" id="v-voice">-</span></div>
+          <div class="bar"><span id="b-voice" style="width:0%"></span></div>
+        </div>
+        <p class="form-hint" style="margin-top:18px;">
+          ※ 현재는 데모용 수치입니다. 분석 모듈 연결 시 실제 점수로 대체됩니다.
+        </p>
+      </div>
+    </div>
+  </main>
+
+  <footer class="app-footer">© 2026 AI 모의면접 · 졸업작품 데모</footer>
+
+  <script src="js/common.js"></script>
+  <script src="js/data.js"></script>
+  <script>
+    requireLogin();
+
+    // 타이머
+    let sec = 0;
+    const timerEl = document.getElementById("timer");
+    const timerId = setInterval(() => {
+      sec++;
+      const m = String(Math.floor(sec / 60)).padStart(2, "0");
+      const s = String(sec % 60).padStart(2, "0");
+      timerEl.textContent = `${m}:${s}`;
+    }, 1000);
+
+    // 가짜 실시간 점수
+    function jitter(base) {
+      return Math.max(40, Math.min(99, base + Math.round((Math.random() - 0.5) * 12)));
+    }
+    const bases = { pose: 78, gaze: 72, expr: 80, voice: 75 };
+    function refreshLive() {
+      for (const k of Object.keys(bases)) {
+        const v = jitter(bases[k]);
+        document.getElementById("v-" + k).textContent = v;
+        document.getElementById("b-" + k).style.width = v + "%";
+      }
+    }
+    refreshLive();
+    const liveId = setInterval(refreshLive, 1200);
+
+    // 질문 넘기기
+    const QS = [
+      "간단히 자기소개 부탁드립니다.",
+      "가장 자신 있는 프로젝트 경험을 말씀해주세요.",
+      "그 과정에서 어려웠던 점은 무엇이었나요?",
+      "팀원과 의견이 충돌하면 어떻게 해결하시나요?",
+      "마지막으로 하고 싶은 말이 있나요?",
+    ];
+    let qi = 0;
+    document.getElementById("nextBtn").addEventListener("click", () => {
+      qi = (qi + 1) % QS.length;
+      document.getElementById("question").textContent = QS[qi];
+      toast("다음 질문으로 넘어갑니다", "▶");
+    });
+    document.getElementById("calibBtn").addEventListener("click", () => {
+      toast("시선 중앙 보정 요청됨", "🎯");
+    });
+
+    // 면접 종료
+    document.getElementById("endBtn").addEventListener("click", () => {
+      if (!confirm("면접을 종료하고 결과를 저장할까요?")) return;
+      clearInterval(timerId);
+      clearInterval(liveId);
+      const result = createMockResult();
+      const id = addRecord(result);
+      location.href = "result.html?id=" + id;
+    });
+  </script>
+</body>
+</html>
