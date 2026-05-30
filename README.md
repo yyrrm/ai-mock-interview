@@ -1,4 +1,4 @@
-# 🎤 AI 모의면접 (AI Mock Interview)
+# AI 모의면접 (AI Mock Interview)
 
 웹캠과 마이크로 지원자를 실시간 분석하여 **자세 · 시선 · 표정 · 손동작 · 음성**을 평가하고,
 답변 내용에 따라 **AI가 다음 면접 질문을 자동 생성**하는 AI 모의면접 시스템입니다. (졸업작품)
@@ -46,7 +46,7 @@ python -m http.server 5500
 - **질문 생성**: OpenAI API
 - **웹 UI**: HTML / CSS / JavaScript (순수)
 
-## ⚠️ 주의
+## 주의
 
 - `.env`, `key.json` 등 **API 키·인증 파일은 절대 커밋하지 마세요** (`.gitignore`에 등록됨)
 - `.venv/`(가상환경)는 커밋하지 않습니다 — `requirements.txt`로 재생성하세요
