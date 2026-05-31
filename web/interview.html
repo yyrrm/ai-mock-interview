@@ -59,11 +59,15 @@
     <div class="interview-grid">
       <!-- 카메라 영역 -->
       <div class="reveal d1">
-        <div class="camera-box">
-          <div class="rec"><span class="blink"></span> REC</div>
-          <div class="ph-ico">🎥</div>
-          <div>카메라 화면이 여기에 표시됩니다</div>
-          <div style="font-size:13px;margin-top:4px;opacity:0.7;">(분석 모듈 연결 예정)</div>
+        <div class="camera-box" id="cameraBox">
+          <video id="camera" autoplay playsinline muted></video>
+          <div class="rec" id="recBadge" style="display:none;"><span class="blink"></span> REC</div>
+          <div class="cam-placeholder" id="camPlaceholder">
+            <div class="ph-ico">🎥</div>
+            <div id="camMsg">카메라를 준비하는 중...</div>
+            <div class="cam-sub" id="camSub">권한 요청 창에서 “허용”을 눌러주세요.</div>
+            <button class="btn btn-light" id="camRetry" style="display:none;margin-top:14px;">다시 시도</button>
+          </div>
         </div>
 
         <div class="question-box">
@@ -215,9 +219,171 @@
       }
 
       setQuestion(firstQuestion);
+      startCamera();
       startTimer();
       startLive();
     }
+
+    /* ===== 카메라 (getUserMedia) =====
+       브라우저 웹캠을 실제로 연결하고, 케이블 노화 등으로 끊기면 자동 복구한다.
+       (영상 분석 모듈 연동은 다음 단계) */
+    let mediaStream = null;
+    let camStopping = false;       // 의도적 종료 여부 (종료 시 재연결 루프가 돌지 않게)
+    let camReconnecting = false;   // 재연결 루프 중복 실행 방지
+    const MAX_RECONNECT = 4;       // 자동 재시도 최대 횟수
+    const RECONNECT_BASE_MS = 1000; // 백오프 기준 (1s → 2s → 4s → 8s)
+
+    function openCamera() {
+      return navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
+        audio: false,
+      });
+    }
+
+    async function startCamera() {
+      const box = document.getElementById("cameraBox");
+      const retry = document.getElementById("camRetry");
+
+      camStopping = false;
+      camReconnecting = false;
+      box.classList.remove("error", "live");
+      retry.style.display = "none";
+      setCamMsg("카메라를 준비하는 중...", "권한 요청 창에서 “허용”을 눌러주세요.");
+
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        showCamError("이 브라우저는 카메라를 지원하지 않습니다.",
+          "최신 Chrome 또는 Edge에서, http://localhost 주소로 열어주세요.");
+        return;
+      }
+
+      try {
+        applyStream(await openCamera());
+      } catch (err) {
+        handleCamError(err);
+      }
+    }
+
+    // 새 스트림을 화면에 적용하고, 끊김 감지를 위해 트랙 이벤트를 연결한다.
+    function applyStream(stream) {
+      mediaStream = stream;
+      const box = document.getElementById("cameraBox");
+      document.getElementById("camera").srcObject = stream;
+      box.classList.remove("error");
+      box.classList.add("live");
+      document.getElementById("recBadge").style.display = "";
+
+      stream.getVideoTracks().forEach((track) => {
+        // 물리적으로 완전히 끊김 → 자동 재연결 시도
+        track.onended = () => { if (!camStopping) reconnectCamera(); };
+        // 일시적 신호 끊김 (트랙은 살아 있으나 프레임 정지)
+        track.onmute = () => {
+          if (camStopping || camReconnecting) return;
+          box.classList.remove("live");
+          document.getElementById("recBadge").style.display = "none";
+          document.getElementById("camRetry").style.display = "none";
+          setCamMsg("카메라 신호가 끊겼습니다.", "복구를 기다리는 중...");
+        };
+        // 신호 복구 → 다시 표시
+        track.onunmute = () => {
+          if (camStopping || camReconnecting) return;
+          box.classList.add("live");
+          document.getElementById("recBadge").style.display = "";
+        };
+      });
+    }
+
+    // 끊긴 카메라를 백오프로 자동 재연결하고, 모두 실패하면 수동 폴백(다시 시도 버튼)으로 전환.
+    async function reconnectCamera() {
+      if (camReconnecting || camStopping) return;
+      camReconnecting = true;
+
+      // 죽은 스트림 정리
+      if (mediaStream) {
+        mediaStream.getTracks().forEach((t) => t.stop());
+        mediaStream = null;
+      }
+      const box = document.getElementById("cameraBox");
+      box.classList.remove("live");
+      document.getElementById("recBadge").style.display = "none";
+      document.getElementById("camRetry").style.display = "none";
+
+      for (let attempt = 1; attempt <= MAX_RECONNECT; attempt++) {
+        if (camStopping) { camReconnecting = false; return; }
+        setCamMsg("카메라 연결이 끊겼습니다.", `재연결 중... (${attempt}/${MAX_RECONNECT})`);
+        await camSleep(RECONNECT_BASE_MS * Math.pow(2, attempt - 1));
+        if (camStopping) { camReconnecting = false; return; }
+        try {
+          const stream = await openCamera();
+          camReconnecting = false;
+          applyStream(stream);
+          toast("카메라가 다시 연결되었습니다", "🎥");
+          return;
+        } catch (err) {
+          /* 다음 시도로 진행 */
+        }
+      }
+
+      camReconnecting = false;
+      showCamError("카메라를 다시 연결하지 못했습니다.",
+        "케이블·연결 상태를 확인한 뒤 “다시 시도”를 눌러주세요.");
+    }
+
+    function camSleep(ms) {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    function handleCamError(err) {
+      let title = "카메라를 열 수 없습니다.";
+      let hint = err.message || "";
+      switch (err.name) {
+        case "NotAllowedError":
+        case "SecurityError":
+          title = "카메라 권한이 거부되었습니다.";
+          hint = "주소창의 카메라 아이콘에서 권한을 허용한 뒤 다시 시도하세요.";
+          break;
+        case "NotFoundError":
+        case "OverconstrainedError":
+          title = "사용할 수 있는 카메라가 없습니다.";
+          hint = "웹캠이 연결되어 있는지 확인하세요.";
+          break;
+        case "NotReadableError":
+          title = "다른 앱이 카메라를 사용 중입니다.";
+          hint = "Zoom·OBS 등 카메라를 쓰는 프로그램을 종료한 뒤 다시 시도하세요.";
+          break;
+      }
+      showCamError(title, hint);
+    }
+
+    function setCamMsg(title, hint) {
+      document.getElementById("camMsg").textContent = title;
+      document.getElementById("camSub").textContent = hint || "";
+    }
+
+    function showCamError(title, hint) {
+      const box = document.getElementById("cameraBox");
+      box.classList.remove("live");
+      box.classList.add("error");
+      setCamMsg(title, hint);
+      document.getElementById("camRetry").style.display = "";
+      document.getElementById("recBadge").style.display = "none";
+    }
+
+    function stopCamera() {
+      camStopping = true;          // 진행 중인 자동 재연결 루프를 멈춘다
+      camReconnecting = false;
+      if (mediaStream) {
+        mediaStream.getTracks().forEach((t) => t.stop());
+        mediaStream = null;
+      }
+      const box = document.getElementById("cameraBox");
+      if (box) box.classList.remove("live");
+      const rec = document.getElementById("recBadge");
+      if (rec) rec.style.display = "none";
+    }
+
+    document.getElementById("camRetry").addEventListener("click", startCamera);
+    // 페이지를 벗어나면 카메라를 확실히 해제 (카메라 표시등 꺼짐 보장)
+    window.addEventListener("pagehide", stopCamera);
 
     function setQuestion(q) {
       state.currentQuestion = q;
@@ -298,6 +464,7 @@
       if (!confirm("면접을 종료하고 결과를 저장할까요?")) return;
       clearInterval(timerId);
       clearInterval(liveId);
+      stopCamera();
       const result = createMockResult();
       // 실제로 진행한 질문들을 결과에 반영
       if (state.asked.length) result.questions = state.asked.slice();

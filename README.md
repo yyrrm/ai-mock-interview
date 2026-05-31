@@ -14,6 +14,7 @@
 ## 데스크톱 버전 실행
 
 ```bash
+Python 3.11 권장
 # 1. 가상환경 생성 & 의존성 설치
 python -m venv .venv
 .venv\Scripts\activate        # Windows

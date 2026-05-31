@@ -498,8 +498,30 @@ a { color: inherit; text-decoration: none; }
   border: 1px solid rgba(255,255,255,0.06);
 }
 .camera-box .ph-ico { font-size: 58px; margin-bottom: 12px; opacity: 0.7; }
+
+/* 실시간 웹캠 영상 (getUserMedia) */
+.camera-box video {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1);          /* 거울 모드 (셀카처럼 좌우 반전) */
+  background: #000;
+  display: none;                  /* 스트림 연결 전에는 숨김 */
+}
+.camera-box.live video { display: block; }
+.camera-box.live .cam-placeholder { display: none; }
+
+.cam-placeholder {
+  position: relative; z-index: 1;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; padding: 0 22px;
+}
+.cam-placeholder .cam-sub { font-size: 13px; margin-top: 4px; opacity: 0.7; max-width: 320px; }
+.camera-box.error .ph-ico { opacity: 1; }
+.camera-box.error .cam-sub { color: #ffb4b4; opacity: 0.95; }
+
 .camera-box .rec {
-  position: absolute; top: 16px; left: 16px;
+  position: absolute; top: 16px; left: 16px; z-index: 2;
   display: flex; align-items: center; gap: 7px;
   background: rgba(0, 0, 0, 0.45); color: #fff;
   padding: 7px 13px; border-radius: 100px; font-size: 13px; font-weight: 700;
