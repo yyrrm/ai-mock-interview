@@ -689,6 +689,72 @@ a { color: inherit; text-decoration: none; }
 .resume-status.err { color: var(--red); }
 .resume-status.loading { color: var(--indigo-600); }
 
+/* 입력 방식 탭 (PDF / 자기소개서) */
+.resume-tabs {
+  display: flex;
+  gap: 8px;
+  margin-top: 22px;
+  padding: 5px;
+  background: #f1f3f9;
+  border-radius: 12px;
+}
+.resume-tab {
+  flex: 1;
+  padding: 10px 12px;
+  border: none;
+  background: transparent;
+  border-radius: 9px;
+  font-size: 14px;
+  font-weight: 700;
+  font-family: inherit;
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.resume-tab.active {
+  background: #fff;
+  color: var(--indigo-600);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+/* 자기소개서 문항 작성 */
+.cover-hint {
+  text-align: left;
+  margin-top: 18px;
+  font-size: 13px;
+  color: var(--ink-soft);
+  line-height: 1.5;
+}
+.cover-field { text-align: left; margin-top: 16px; }
+.cover-field-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 7px;
+}
+.cover-field-head label { font-weight: 700; font-size: 14px; }
+.cover-count { font-size: 12px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.cover-count.warn { color: #d97706; }
+.cover-count.ok { color: var(--indigo-600); }
+.cover-field textarea {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1.5px solid var(--line);
+  border-radius: 12px;
+  font-size: 14px;
+  font-family: inherit;
+  line-height: 1.6;
+  background: #fbfcfe;
+  resize: vertical;
+  box-sizing: border-box;
+}
+.cover-field textarea:focus {
+  outline: none;
+  border-color: var(--indigo);
+  background: #fff;
+  box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.12);
+}
+
 /* ====================== 이력서 분석 요약 배너 ====================== */
 .resume-summary {
   display: flex;

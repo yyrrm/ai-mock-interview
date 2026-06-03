@@ -17,22 +17,42 @@
       <div class="resume-ico">📄</div>
       <h2>이력서로 맞춤 면접 시작</h2>
       <p class="resume-desc">
-        이력서(PDF)를 업로드하면 AI가 내용을 분석해<br />
-        <strong>지원자에게 꼭 맞는 질문</strong>을 생성합니다.
+        이력서를 분석해 <strong>지원자에게 꼭 맞는 질문</strong>을 생성합니다.<br />
+        PDF를 올리거나, 자기소개서 문항을 직접 작성하세요.
       </p>
+
+      <!-- 입력 방식 탭 -->
+      <div class="resume-tabs">
+        <button type="button" class="resume-tab active" data-tab="pdf">📄 이력서 PDF</button>
+        <button type="button" class="resume-tab" data-tab="cover">✍️ 자기소개서 작성</button>
+      </div>
 
       <div class="resume-field">
         <label for="topicInput">면접 주제 <span style="font-weight:400;color:var(--ink-soft)">(선택)</span></label>
         <input id="topicInput" type="text" placeholder="예: 백엔드 개발 신입 공채" />
       </div>
 
-      <label id="dropZone" class="drop-zone" for="resumeFile">
-        <input id="resumeFile" type="file" accept="application/pdf" hidden />
-        <span id="dropText">PDF 파일을 선택하거나 여기로 끌어다 놓으세요</span>
-      </label>
+      <!-- 방식 1: PDF 업로드 -->
+      <div id="tabPdf" class="resume-tabpane">
+        <label id="dropZone" class="drop-zone" for="resumeFile">
+          <input id="resumeFile" type="file" accept="application/pdf" hidden />
+          <span id="dropText">PDF 파일을 선택하거나 여기로 끌어다 놓으세요</span>
+        </label>
+        <div class="resume-actions">
+          <button class="btn btn-primary btn-lg" id="startWithResume" disabled>이력서로 면접 시작 ▶</button>
+        </div>
+      </div>
+
+      <!-- 방식 2: 자기소개서 문항 작성 -->
+      <div id="tabCover" class="resume-tabpane" style="display:none;">
+        <p class="cover-hint">각 항목을 1,000~2,000자 이내로 작성하세요. (한 항목 이상 작성하면 시작할 수 있습니다)</p>
+        <div id="coverFields"></div>
+        <div class="resume-actions">
+          <button class="btn btn-primary btn-lg" id="startWithCover">자기소개서로 면접 시작 ▶</button>
+        </div>
+      </div>
 
       <div class="resume-actions">
-        <button class="btn btn-primary btn-lg" id="startWithResume" disabled>이력서로 면접 시작 ▶</button>
         <button class="btn btn-ghost" id="startWithout">이력서 없이 시작</button>
       </div>
       <div id="resumeStatus" class="resume-status"></div>
@@ -123,10 +143,19 @@
     /* ===== 면접 상태 ===== */
     const state = {
       resumeText: "",       // 이력서 추출 텍스트 (질문 생성 맥락)
+      guidance: "",         // 질문 비중 등 추가 지침 (자기소개서일 때 사용)
       topic: "면접",
       asked: [],            // 이미 한 질문들 (중복 방지)
       currentQuestion: "",
     };
+
+    // 자기소개서 문항 정의 (백엔드 COVER_LETTER_SECTIONS 와 key 일치)
+    const COVER_SECTIONS = [
+      { key: "growth", label: "성장과정", placeholder: "자라온 환경, 가치관 형성에 영향을 준 경험 등" },
+      { key: "motivation", label: "지원동기", placeholder: "이 직무·회사에 지원한 이유" },
+      { key: "strength_weakness", label: "자신의 장단점", placeholder: "강점과 약점, 그리고 개선 노력" },
+      { key: "aspiration", label: "입사 후 포부", placeholder: "입사 후 이루고 싶은 목표와 성장 계획" },
+    ];
 
     let timerId = null;
     let liveId = null;
@@ -199,6 +228,87 @@
         startBtn.disabled = false;
         skipBtn.disabled = false;
       }
+    });
+
+    /* ===== 자기소개서 문항 작성 ===== */
+    const coverBtn = document.getElementById("startWithCover");
+    const coverFields = document.getElementById("coverFields");
+
+    // 4개 문항 textarea + 글자 수 카운터를 동적으로 생성
+    COVER_SECTIONS.forEach((sec) => {
+      const wrap = document.createElement("div");
+      wrap.className = "cover-field";
+      wrap.innerHTML =
+        '<div class="cover-field-head">' +
+          '<label for="cover-' + sec.key + '">' + sec.label + '</label>' +
+          '<span class="cover-count" id="count-' + sec.key + '">0자</span>' +
+        '</div>' +
+        '<textarea id="cover-' + sec.key + '" data-key="' + sec.key + '" rows="4" maxlength="2000" placeholder="' + sec.placeholder + '"></textarea>';
+      coverFields.appendChild(wrap);
+    });
+
+    // 글자 수 실시간 표시 (1000~2000자 범위 안내)
+    coverFields.querySelectorAll("textarea").forEach((ta) => {
+      const counter = document.getElementById("count-" + ta.dataset.key);
+      ta.addEventListener("input", () => {
+        const n = ta.value.trim().length;
+        counter.textContent = n.toLocaleString() + "자";
+        counter.className = "cover-count" + (n > 0 && n < 1000 ? " warn" : n >= 1000 ? " ok" : "");
+      });
+    });
+
+    function collectCoverSections() {
+      const sections = {};
+      let hasAny = false;
+      coverFields.querySelectorAll("textarea").forEach((ta) => {
+        const v = ta.value.trim();
+        sections[ta.dataset.key] = v;
+        if (v) hasAny = true;
+      });
+      return { sections, hasAny };
+    }
+
+    coverBtn.addEventListener("click", async () => {
+      const { sections, hasAny } = collectCoverSections();
+      if (!hasAny) {
+        setStatus("자기소개서 내용을 한 항목 이상 작성해 주세요.", "err");
+        return;
+      }
+      state.topic = (topicInput.value || "면접").trim() || "면접";
+
+      coverBtn.disabled = true;
+      skipBtn.disabled = true;
+      setStatus("자기소개서를 분석하는 중입니다... (최대 10초)", "loading");
+
+      try {
+        const res = await fetch("/api/cover-letter", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ topic: state.topic, sections }),
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.msg || "분석 실패");
+
+        state.resumeText = data.resume_text || "";
+        state.guidance = data.guidance || "";
+        beginInterview(data.first_question, data.summary);
+      } catch (err) {
+        setStatus("오류: " + err.message, "err");
+        coverBtn.disabled = false;
+        skipBtn.disabled = false;
+      }
+    });
+
+    /* ===== 입력 방식 탭 전환 ===== */
+    document.querySelectorAll(".resume-tab").forEach((tab) => {
+      tab.addEventListener("click", () => {
+        document.querySelectorAll(".resume-tab").forEach((t) => t.classList.remove("active"));
+        tab.classList.add("active");
+        const isPdf = tab.dataset.tab === "pdf";
+        document.getElementById("tabPdf").style.display = isPdf ? "" : "none";
+        document.getElementById("tabCover").style.display = isPdf ? "none" : "";
+        setStatus("");
+      });
     });
 
     // 이력서 없이 시작
@@ -439,6 +549,7 @@
             topic: state.topic,
             previous_questions: state.asked,
             resume_context: state.resumeText,
+            guidance: state.guidance,
           }),
         });
         const data = await res.json();

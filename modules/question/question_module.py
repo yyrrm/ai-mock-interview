@@ -1,6 +1,7 @@
 from dotenv import load_dotenv
 import os
 import json
+import base64
 from openai import OpenAI
 
 # .env 파일 로드
@@ -11,7 +12,40 @@ _api_key = os.getenv("OPENAI_API_KEY")
 client = OpenAI(api_key=_api_key) if _api_key else None
 
 # 이력서 텍스트가 너무 길면 프롬프트 비용/한도 초과 → 앞부분만 사용
-MAX_RESUME_CHARS = 6000
+# (자기소개서 4문항 × 2000자 + 라벨까지 담을 수 있도록 넉넉하게 잡는다)
+MAX_RESUME_CHARS = 9000
+
+# OCR(이미지 PDF 인식) 시 한 번에 처리할 최대 페이지 수 (비용/속도 보호)
+MAX_OCR_PAGES = 5
+
+# 자기소개서 문항 정의. 사용자는 각 항목을 1000~2000자로 작성한다.
+# weight="low" 인 항목은 질문 생성 시 비중을 낮춘다(성장과정).
+COVER_LETTER_SECTIONS = [
+    {"key": "growth", "label": "성장과정", "weight": "low"},
+    {"key": "motivation", "label": "지원동기", "weight": "normal"},
+    {"key": "strength_weakness", "label": "자신의 장단점", "weight": "normal"},
+    {"key": "aspiration", "label": "입사 후 포부", "weight": "normal"},
+]
+
+# 자기소개서 기반 질문 생성 시 모델에 주는 비중 가이드
+COVER_LETTER_GUIDANCE = (
+    "이 지원자는 자기소개서를 [성장과정, 지원동기, 자신의 장단점, 입사 후 포부] "
+    "항목으로 작성했다. 질문은 지원동기·자신의 장단점·입사 후 포부와 직무 역량에 "
+    "집중하고, 성장과정에 관한 질문은 비중을 낮춰 가끔만(전체 질문 중 일부만) 다뤄라."
+)
+
+
+def build_cover_letter_text(sections):
+    """자기소개서 문항 답변({key: text})을 라벨이 붙은 하나의 텍스트로 합친다.
+
+    이렇게 합친 텍스트를 이력서 맥락(resume_context)으로 그대로 활용한다.
+    """
+    parts = []
+    for sec in COVER_LETTER_SECTIONS:
+        val = (sections.get(sec["key"]) or "").strip()
+        if val:
+            parts.append(f"[{sec['label']}]\n{val}")
+    return "\n\n".join(parts)
 
 # 이력서가 없거나 API 호출이 불가능할 때 쓰는 기본 질문 풀
 _FALLBACK_QUESTIONS = [
@@ -42,12 +76,59 @@ def _resume_block(resume_context):
     return f"[지원자 이력서 내용]\n{clipped}\n"
 
 
-def analyze_resume(resume_context, topic="면접"):
+def ocr_pdf_images(images):
+    """이미지(PNG bytes)로 된 이력서 페이지에서 텍스트를 추출한다 (OpenAI 비전 OCR).
+
+    텍스트가 아니라 그림으로 저장된 PDF(스캔본·캡처 등)는 pypdf로 글자를
+    뽑을 수 없으므로, 페이지를 이미지로 렌더링한 뒤 비전 모델로 글자를 읽는다.
+
+    Args:
+        images: 페이지별 PNG 이미지 바이트들의 리스트
+
+    Returns:
+        str: 인식한 전체 텍스트 (실패 시 빈 문자열)
+    """
+    if client is None or not images:
+        return ""
+
+    content = [
+        {
+            "type": "text",
+            "text": (
+                "다음 이미지들은 한 지원자의 이력서 PDF 페이지다. "
+                "이미지에 보이는 한국어/영어 텍스트를 빠짐없이 그대로 추출하라. "
+                "요약·번역·설명·해설은 절대 하지 말고, 추출한 원문 텍스트만 출력하라."
+            ),
+        }
+    ]
+    for img in images[:MAX_OCR_PAGES]:
+        b64 = base64.b64encode(img).decode("ascii")
+        content.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{b64}"},
+            }
+        )
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=[{"role": "user", "content": content}],
+            temperature=0,
+        )
+        return (response.choices[0].message.content or "").strip()
+    except Exception as e:
+        print("이력서 OCR 오류:", e)
+        return ""
+
+
+def analyze_resume(resume_context, topic="면접", guidance=""):
     """이력서 텍스트를 분석해 요약과 첫 면접 질문을 생성한다.
 
     Args:
         resume_context: 이력서에서 추출한 텍스트
         topic: 면접 주제 (예: "백엔드 개발", "신입 공채")
+        guidance: 질문 비중 등 추가 지침 (예: 자기소개서 항목별 비중)
 
     Returns:
         dict: {"summary": str, "first_question": str}
@@ -63,6 +144,8 @@ def analyze_resume(resume_context, topic="면접"):
             "first_question": _FALLBACK_QUESTIONS[0],
         }
 
+    guidance_block = f"\n[추가 지침]\n{guidance}\n" if guidance else ""
+
     prompt = f"""너는 실제 기업 면접관 AI이다.
 아래 지원자의 이력서를 읽고, 면접을 시작하기 위한 분석과 첫 질문을 만든다.
 
@@ -71,7 +154,7 @@ def analyze_resume(resume_context, topic="면접"):
 
 [지원자 이력서 내용]
 {clipped}
-
+{guidance_block}
 [해야 할 일]
 1. 이력서에서 파악한 핵심(주요 경험/기술/강점)을 2~3문장으로 간결하게 요약
 2. 이 지원자에게 가장 먼저 물어볼 면접 질문 1개 생성
@@ -104,7 +187,7 @@ def analyze_resume(resume_context, topic="면접"):
         }
 
 
-def make_question(answer_text, topic="면접", previous_questions=None, resume_context=None):
+def make_question(answer_text, topic="면접", previous_questions=None, resume_context=None, guidance=""):
     """지원자의 직전 답변(과 이력서)을 바탕으로 다음 면접 질문을 생성한다.
 
     Args:
@@ -112,6 +195,7 @@ def make_question(answer_text, topic="면접", previous_questions=None, resume_c
         topic: 면접 주제 (예: "백엔드 개발", "신입 공채")
         previous_questions: 지금까지 이미 물어본 질문 리스트(중복 방지용)
         resume_context: 지원자 이력서에서 추출한 텍스트(있으면 맞춤형 질문에 활용)
+        guidance: 질문 비중 등 추가 지침 (예: 자기소개서 항목별 비중)
     """
     # API 키가 없으면 폴백: 이미 한 질문과 겹치지 않는 기본 질문을 하나 고른다
     if client is None:
@@ -129,6 +213,7 @@ def make_question(answer_text, topic="면접", previous_questions=None, resume_c
         asked_block = ""
 
     resume_block = _resume_block(resume_context)
+    guidance_block = f"[추가 지침]\n{guidance}\n\n" if guidance else ""
 
     prompt = f"""너는 실제 기업 면접에서 사용되는 질문을 생성하는 전문 면접관 AI이다.
 목표는 지원자의 역량, 사고력, 기술, 의사소통 능력을 자연스럽게 평가하는 것이다.
@@ -139,7 +224,7 @@ def make_question(answer_text, topic="면접", previous_questions=None, resume_c
 {resume_block}[지원자의 직전 답변]
 {answer_text}
 
-{asked_block}[질문 생성 규칙]
+{asked_block}{guidance_block}[질문 생성 규칙]
 1. 이미 했던 질문과 의미가 겹치는 질문은 금지
 2. 지나치게 공격적이거나 부정적인 질문은 피할 것
 3. 실제 면접에서 사용 가능한 현실적인 질문일 것

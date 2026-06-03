@@ -11,3 +11,4 @@ sounddevice==0.5.3
 google-cloud-speech==2.35.0
 flask==3.1.0
 pypdf==5.1.0
+PyMuPDF==1.26.7
