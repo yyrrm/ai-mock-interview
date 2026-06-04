@@ -17,6 +17,11 @@ __pycache__/
 *.pyc
 *.pyo
 
+# ===== 프론트엔드(React/Vite) =====
+frontend/node_modules/
+frontend/dist/
+npm-debug.log*
+
 # ===== 임시/생성 파일 =====
 temp.wav
 exp_*.jpg

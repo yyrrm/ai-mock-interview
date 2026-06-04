@@ -11,49 +11,28 @@
 <body>
   <header id="appHeader"></header>
 
-  <!-- ===== 이력서 업로드 게이트 (면접 시작 전) ===== -->
+  <!-- ===== 자기소개서 작성 게이트 (면접 시작 전) ===== -->
   <div id="resumeGate" class="resume-gate">
     <div class="resume-card reveal">
-      <div class="resume-ico">📄</div>
-      <h2>이력서로 맞춤 면접 시작</h2>
+      <div class="resume-ico">✍️</div>
+      <h2>자기소개서로 맞춤 면접 시작</h2>
       <p class="resume-desc">
-        이력서를 분석해 <strong>지원자에게 꼭 맞는 질문</strong>을 생성합니다.<br />
-        PDF를 올리거나, 자기소개서 문항을 직접 작성하세요.
+        자기소개서 문항을 작성하면 AI가 내용을 분석해<br />
+        <strong>지원자에게 꼭 맞는 질문</strong>을 생성합니다.
       </p>
-
-      <!-- 입력 방식 탭 -->
-      <div class="resume-tabs">
-        <button type="button" class="resume-tab active" data-tab="pdf">📄 이력서 PDF</button>
-        <button type="button" class="resume-tab" data-tab="cover">✍️ 자기소개서 작성</button>
-      </div>
 
       <div class="resume-field">
         <label for="topicInput">면접 주제 <span style="font-weight:400;color:var(--ink-soft)">(선택)</span></label>
         <input id="topicInput" type="text" placeholder="예: 백엔드 개발 신입 공채" />
       </div>
 
-      <!-- 방식 1: PDF 업로드 -->
-      <div id="tabPdf" class="resume-tabpane">
-        <label id="dropZone" class="drop-zone" for="resumeFile">
-          <input id="resumeFile" type="file" accept="application/pdf" hidden />
-          <span id="dropText">PDF 파일을 선택하거나 여기로 끌어다 놓으세요</span>
-        </label>
-        <div class="resume-actions">
-          <button class="btn btn-primary btn-lg" id="startWithResume" disabled>이력서로 면접 시작 ▶</button>
-        </div>
-      </div>
-
-      <!-- 방식 2: 자기소개서 문항 작성 -->
-      <div id="tabCover" class="resume-tabpane" style="display:none;">
-        <p class="cover-hint">각 항목을 1,000~2,000자 이내로 작성하세요. (한 항목 이상 작성하면 시작할 수 있습니다)</p>
-        <div id="coverFields"></div>
-        <div class="resume-actions">
-          <button class="btn btn-primary btn-lg" id="startWithCover">자기소개서로 면접 시작 ▶</button>
-        </div>
-      </div>
+      <!-- 자기소개서 문항 작성 -->
+      <p class="cover-hint">각 항목을 1,000~2,000자 이내로 작성하세요. (한 항목 이상 작성하면 시작할 수 있습니다)</p>
+      <div id="coverFields"></div>
 
       <div class="resume-actions">
-        <button class="btn btn-ghost" id="startWithout">이력서 없이 시작</button>
+        <button class="btn btn-primary btn-lg" id="startWithCover">자기소개서로 면접 시작 ▶</button>
+        <button class="btn btn-ghost" id="startWithout">자기소개서 없이 시작</button>
       </div>
       <div id="resumeStatus" class="resume-status"></div>
     </div>
@@ -160,75 +139,16 @@
     let timerId = null;
     let liveId = null;
 
-    /* ===== 이력서 게이트 ===== */
+    /* ===== 면접 시작 게이트 ===== */
     const gate = document.getElementById("resumeGate");
-    const fileInput = document.getElementById("resumeFile");
-    const dropZone = document.getElementById("dropZone");
-    const dropText = document.getElementById("dropText");
-    const startBtn = document.getElementById("startWithResume");
     const skipBtn = document.getElementById("startWithout");
     const statusEl = document.getElementById("resumeStatus");
     const topicInput = document.getElementById("topicInput");
-
-    let pickedFile = null;
 
     function setStatus(msg, kind = "") {
       statusEl.textContent = msg || "";
       statusEl.className = "resume-status" + (kind ? " " + kind : "");
     }
-
-    fileInput.addEventListener("change", () => {
-      pickedFile = fileInput.files[0] || null;
-      if (pickedFile) {
-        dropText.textContent = "📎 " + pickedFile.name;
-        startBtn.disabled = false;
-        setStatus("");
-      }
-    });
-
-    // 드래그 앤 드롭
-    ["dragover", "dragenter"].forEach((ev) =>
-      dropZone.addEventListener(ev, (e) => { e.preventDefault(); dropZone.classList.add("over"); })
-    );
-    ["dragleave", "drop"].forEach((ev) =>
-      dropZone.addEventListener(ev, (e) => { e.preventDefault(); dropZone.classList.remove("over"); })
-    );
-    dropZone.addEventListener("drop", (e) => {
-      const f = e.dataTransfer.files[0];
-      if (f && f.type === "application/pdf") {
-        fileInput.files = e.dataTransfer.files;
-        fileInput.dispatchEvent(new Event("change"));
-      } else {
-        setStatus("PDF 파일만 업로드할 수 있습니다.", "err");
-      }
-    });
-
-    // 이력서로 시작
-    startBtn.addEventListener("click", async () => {
-      if (!pickedFile) return;
-      state.topic = (topicInput.value || "면접").trim() || "면접";
-
-      startBtn.disabled = true;
-      skipBtn.disabled = true;
-      setStatus("이력서를 분석하는 중입니다... (최대 10초)", "loading");
-
-      const fd = new FormData();
-      fd.append("resume", pickedFile);
-      fd.append("topic", state.topic);
-
-      try {
-        const res = await fetch("/api/resume", { method: "POST", body: fd });
-        const data = await res.json();
-        if (!data.ok) throw new Error(data.msg || "분석 실패");
-
-        state.resumeText = data.resume_text || "";
-        beginInterview(data.first_question, data.summary);
-      } catch (err) {
-        setStatus("오류: " + err.message, "err");
-        startBtn.disabled = false;
-        skipBtn.disabled = false;
-      }
-    });
 
     /* ===== 자기소개서 문항 작성 ===== */
     const coverBtn = document.getElementById("startWithCover");
@@ -299,19 +219,7 @@
       }
     });
 
-    /* ===== 입력 방식 탭 전환 ===== */
-    document.querySelectorAll(".resume-tab").forEach((tab) => {
-      tab.addEventListener("click", () => {
-        document.querySelectorAll(".resume-tab").forEach((t) => t.classList.remove("active"));
-        tab.classList.add("active");
-        const isPdf = tab.dataset.tab === "pdf";
-        document.getElementById("tabPdf").style.display = isPdf ? "" : "none";
-        document.getElementById("tabCover").style.display = isPdf ? "none" : "";
-        setStatus("");
-      });
-    });
-
-    // 이력서 없이 시작
+    // 자기소개서 없이 시작
     skipBtn.addEventListener("click", () => {
       state.topic = (topicInput.value || "면접").trim() || "면접";
       beginInterview("간단히 자기소개 부탁드립니다.", "");

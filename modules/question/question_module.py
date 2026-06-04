@@ -1,7 +1,6 @@
 from dotenv import load_dotenv
 import os
 import json
-import base64
 from openai import OpenAI
 
 # .env 파일 로드
@@ -14,9 +13,6 @@ client = OpenAI(api_key=_api_key) if _api_key else None
 # 이력서 텍스트가 너무 길면 프롬프트 비용/한도 초과 → 앞부분만 사용
 # (자기소개서 4문항 × 2000자 + 라벨까지 담을 수 있도록 넉넉하게 잡는다)
 MAX_RESUME_CHARS = 9000
-
-# OCR(이미지 PDF 인식) 시 한 번에 처리할 최대 페이지 수 (비용/속도 보호)
-MAX_OCR_PAGES = 5
 
 # 자기소개서 문항 정의. 사용자는 각 항목을 1000~2000자로 작성한다.
 # weight="low" 인 항목은 질문 생성 시 비중을 낮춘다(성장과정).
@@ -74,52 +70,6 @@ def _resume_block(resume_context):
     if not clipped:
         return ""
     return f"[지원자 이력서 내용]\n{clipped}\n"
-
-
-def ocr_pdf_images(images):
-    """이미지(PNG bytes)로 된 이력서 페이지에서 텍스트를 추출한다 (OpenAI 비전 OCR).
-
-    텍스트가 아니라 그림으로 저장된 PDF(스캔본·캡처 등)는 pypdf로 글자를
-    뽑을 수 없으므로, 페이지를 이미지로 렌더링한 뒤 비전 모델로 글자를 읽는다.
-
-    Args:
-        images: 페이지별 PNG 이미지 바이트들의 리스트
-
-    Returns:
-        str: 인식한 전체 텍스트 (실패 시 빈 문자열)
-    """
-    if client is None or not images:
-        return ""
-
-    content = [
-        {
-            "type": "text",
-            "text": (
-                "다음 이미지들은 한 지원자의 이력서 PDF 페이지다. "
-                "이미지에 보이는 한국어/영어 텍스트를 빠짐없이 그대로 추출하라. "
-                "요약·번역·설명·해설은 절대 하지 말고, 추출한 원문 텍스트만 출력하라."
-            ),
-        }
-    ]
-    for img in images[:MAX_OCR_PAGES]:
-        b64 = base64.b64encode(img).decode("ascii")
-        content.append(
-            {
-                "type": "image_url",
-                "image_url": {"url": f"data:image/png;base64,{b64}"},
-            }
-        )
-
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4.1-mini",
-            messages=[{"role": "user", "content": content}],
-            temperature=0,
-        )
-        return (response.choices[0].message.content or "").strip()
-    except Exception as e:
-        print("이력서 OCR 오류:", e)
-        return ""
 
 
 def analyze_resume(resume_context, topic="면접", guidance=""):

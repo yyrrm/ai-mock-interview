@@ -658,26 +658,6 @@ a { color: inherit; text-decoration: none; }
   background: #fff;
   box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.12);
 }
-.drop-zone {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  margin-top: 16px;
-  padding: 32px 18px;
-  border: 2px dashed var(--line);
-  border-radius: 14px;
-  color: var(--ink-soft);
-  font-size: 14.5px;
-  cursor: pointer;
-  transition: 0.18s;
-  background: #fbfcfe;
-}
-.drop-zone:hover, .drop-zone.over {
-  border-color: var(--indigo);
-  background: rgba(99, 102, 241, 0.05);
-  color: var(--indigo-600);
-}
 .resume-actions {
   margin-top: 22px;
   display: flex;
@@ -688,34 +668,6 @@ a { color: inherit; text-decoration: none; }
 .resume-status { margin-top: 14px; font-size: 14px; min-height: 20px; }
 .resume-status.err { color: var(--red); }
 .resume-status.loading { color: var(--indigo-600); }
-
-/* 입력 방식 탭 (PDF / 자기소개서) */
-.resume-tabs {
-  display: flex;
-  gap: 8px;
-  margin-top: 22px;
-  padding: 5px;
-  background: #f1f3f9;
-  border-radius: 12px;
-}
-.resume-tab {
-  flex: 1;
-  padding: 10px 12px;
-  border: none;
-  background: transparent;
-  border-radius: 9px;
-  font-size: 14px;
-  font-weight: 700;
-  font-family: inherit;
-  color: var(--ink-soft);
-  cursor: pointer;
-  transition: all 0.15s;
-}
-.resume-tab.active {
-  background: #fff;
-  color: var(--indigo-600);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-}
 
 /* 자기소개서 문항 작성 */
 .cover-hint {
