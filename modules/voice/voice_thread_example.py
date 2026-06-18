@@ -6,27 +6,24 @@ import os
 
 from modules.voice.voice_module import record_until_silence, preprocess_audio
 from modules.voice.stt_google import google_stt
+from modules.evaluation.voice_evaluator import VoiceEvaluator
 
 import modules.shared_flags as flags
 
 voice_result_queue = queue.Queue(maxsize=5)
 
 
-def _make_voice_score_feedback(text: str):
-    """
-    임시 점수/피드백(바로 동작하는 버전)
-    - 인식 성공: 80
-    - 무음/실패: 50
-    """
-    t = (text or "").strip()
-    if not t or t == "(음성 없음)":
-        return 50.0, "음성이 잘 인식되지 않았습니다. 또렷하고 크게 말해보세요."
-    return 80.0, "발화가 정상적으로 인식되었습니다. 현재 발성 유지!"
+def _no_speech_result():
+    """음성이 인식되지 않았을 때의 기본 점수/피드백."""
+    return 50.0, "음성이 잘 인식되지 않았습니다. 또렷하고 크게 말해보세요."
 
 
 def voice_worker(rate=16000):
     print("Voice Thread Started", flush=True)
     print("기본 마이크(Default Input Device) 사용", flush=True)
+
+    # 평가기는 루프 밖에서 1개만 생성 → 발화 사이의 음량 baseline(EMA)을 누적 유지
+    evaluator = VoiceEvaluator()
 
     scores = []
     last_feedback = ""
@@ -61,15 +58,33 @@ def voice_worker(rate=16000):
             text = google_stt(audio_path) or "(음성 없음)"
             print(f"\n[Voice Recognized]\n>> {text}", flush=True)
 
-            score, feedback = _make_voice_score_feedback(text)
+            t = (text or "").strip()
+            metrics = None
+            if not t or t == "(음성 없음)":
+                # 인식 실패 → 평가 생략, 기본 피드백
+                score, feedback = _no_speech_result()
+            else:
+                # 평가지표 기반 실제 음성 평가 (말속도 WPM / 음량 / 침묵)
+                try:
+                    res = evaluator.evaluate(audio_path, text)
+                    score = res.total_score
+                    feedback = res.feedback
+                    metrics = res.metrics
+                    print(f"[Voice Metrics] {metrics}", flush=True)
+                except Exception as ev_err:
+                    # 평가 실패해도 스레드는 죽지 않게 안전 폴백
+                    print("음성 평가 실패 → 기본 점수 사용:", ev_err, flush=True)
+                    score, feedback = 80.0, "발화가 정상적으로 인식되었습니다."
+
             scores.append(float(score))
             last_feedback = feedback
 
-            # main.py가 그대로 받도록 dict 유지 + score/feedback만 추가
+            # main.py가 그대로 받도록 dict 유지 (text/score/feedback) + metrics 추가
             result = {
                 "text": text,
                 "score": score,
                 "feedback": feedback,
+                "metrics": metrics,
                 "timestamp": time.time()
             }
 

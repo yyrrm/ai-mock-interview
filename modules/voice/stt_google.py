@@ -28,8 +28,19 @@ def google_stt(audio_path):
 
     if not response.results:
         print("인식 결과 없음")
-        return None
+        return None, None
 
-    transcript = response.results[0].alternatives[0].transcript
-    print("Google STT 결과:", transcript)
-    return transcript
+    # 발화가 여러 구간(result)으로 나뉘어 인식될 수 있으므로
+    # 텍스트는 이어붙이고, 신뢰도(confidence)는 평균을 낸다.
+    # (팀 합의: 기준 문장이 없는 자유 답변은 confidence 평균값으로 명료도 평가)
+    transcripts = []
+    confidences = []
+    for r in response.results:
+        alt = r.alternatives[0]
+        transcripts.append(alt.transcript)
+        confidences.append(float(alt.confidence))
+
+    transcript = " ".join(transcripts).strip()
+    avg_confidence = (sum(confidences) / len(confidences)) if confidences else 0.0
+    print(f"Google STT 결과: {transcript}  (confidence avg={avg_confidence:.3f})")
+    return transcript, avg_confidence
