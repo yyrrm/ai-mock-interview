@@ -1,5 +1,6 @@
-줘import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell } from "recharts";
+import { startPoseAnalyzer, type PoseAnalyzerHandle } from "./poseAnalyzer";
 
 type Screen = "home" | "prep" | "interview" | "result" | "history";
 
@@ -77,6 +78,11 @@ export default function App() {
   const [guidance, setGuidance] = useState("");              // 질문 비중 지침
   const [answer, setAnswer] = useState("");                  // 현재 질문에 대한 답변 메모
   const [busy, setBusy] = useState(false);                   // API 호출 중
+  const [poseScore, setPoseScore] = useState<number | null>(null); // 실시간 자세 점수
+
+  // 자세 분석(브라우저 MediaPipe) 핸들 / 세션 ID
+  const poseRef = useRef<PoseAnalyzerHandle | null>(null);
+  const sessionIdRef = useRef<string>("");
 
   // 앱 로드 시 세션 복원 — 새로고침해도 로그인 유지
   useEffect(() => {
@@ -148,16 +154,35 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (screen === "prep") startCamera(prepVideoRef);
-    else if (screen === "interview") {
+    let cancelled = false;
+    if (screen === "prep") {
+      startCamera(prepVideoRef);
+    } else if (screen === "interview") {
       startCamera(videoRef);
       timerRef.current = setInterval(() => setTimer((t) => t + 1), 1000);
+      // 실시간 자세 분석 시작 (브라우저 MediaPipe → 서버 PoseEvaluator)
+      setPoseScore(null);
+      if (videoRef.current && sessionIdRef.current) {
+        startPoseAnalyzer(videoRef.current, sessionIdRef.current, (s) => setPoseScore(s))
+          .then((h) => {
+            if (cancelled) h.stop();
+            else poseRef.current = h;
+          })
+          .catch((e) => console.warn("자세 분석 시작 실패:", e));
+      }
     } else {
       stopCamera();
       if (timerRef.current) clearInterval(timerRef.current);
     }
     return () => {
+      cancelled = true;
       if (timerRef.current) clearInterval(timerRef.current);
+      // 면접을 정상 종료하면 endInterview 에서 stop(평균 회수) 후 null 로 비움.
+      // 그 외 경로로 화면이 바뀌면 여기서 정리한다.
+      if (poseRef.current) {
+        poseRef.current.stop();
+        poseRef.current = null;
+      }
     };
   }, [screen, startCamera, stopCamera]);
 
@@ -174,6 +199,8 @@ export default function App() {
 
   // 자기소개서를 분석해 첫 질문을 받고 면접을 시작한다.
   const goToInterview = async (sections: CoverSections) => {
+    // 자세 분석용 세션 ID 발급 (면접 화면 진입 시 분석기가 사용)
+    sessionIdRef.current = "pose_" + Date.now() + "_" + Math.floor(Math.random() * 1e6);
     setBusy(true);
     let firstQ = QUESTIONS[0];
     let rt = "";
@@ -240,13 +267,24 @@ export default function App() {
 
   const endInterview = async (isAbandoned: boolean) => {
     stopCamera();
+    // 자세 분석 종료 → 세션 평균 점수 회수 (있으면 기록에 실제 점수로 반영)
+    let poseAvg: number | null = null;
+    if (poseRef.current) {
+      poseAvg = await poseRef.current.stop();
+      poseRef.current = null;
+    }
     // 끝까지 완료한 면접만 기록으로 저장한다 (로그인 사용자 기준, 서버 DB).
     // 저장 완료를 await 해서 결과/기록 화면 진입 시 누락(경쟁 조건)을 막는다.
     if (!isAbandoned) {
-      const overall = Math.round(
-        RESULT_DATA.scores.reduce((acc, s) => acc + s.score, 0) / RESULT_DATA.scores.length
+      // "자세 평가"는 실제 분석 평균으로 교체, 나머지(표정/시선/음성)는 아직 데모 수치
+      const scores = RESULT_DATA.scores.map((s) =>
+        s.name === "자세 평가" && poseAvg != null
+          ? { name: s.name, score: poseAvg }
+          : { name: s.name, score: s.score }
       );
-      const scores = RESULT_DATA.scores.map((s) => ({ name: s.name, score: s.score }));
+      const overall = Math.round(
+        scores.reduce((acc, s) => acc + s.score, 0) / scores.length
+      );
       try {
         const res = await fetch("/api/records", {
           method: "POST",
@@ -301,6 +339,7 @@ export default function App() {
             answer={answer}
             onAnswerChange={setAnswer}
             busy={busy}
+            poseScore={poseScore}
             onNext={nextQuestion}
             onEnd={() => endInterview(true)}
           />
@@ -926,6 +965,7 @@ function InterviewScreen({
   answer,
   onAnswerChange,
   busy,
+  poseScore,
   onNext,
   onEnd,
 }: {
@@ -939,6 +979,7 @@ function InterviewScreen({
   answer: string;
   onAnswerChange: (v: string) => void;
   busy: boolean;
+  poseScore: number | null;
   onNext: () => void;
   onEnd: () => void;
 }) {
@@ -1078,9 +1119,9 @@ function InterviewScreen({
             </div>
             <div className="absolute top-2 right-2 flex flex-col gap-1">
               {[
-                { label: "표정", color: "bg-green-500" },
-                { label: "시선", color: "bg-blue-400" },
-                { label: "자세", color: "bg-emerald-400" },
+                { label: "표정", color: "bg-green-500", value: null as number | null },
+                { label: "시선", color: "bg-blue-400", value: null as number | null },
+                { label: "자세", color: "bg-emerald-400", value: poseScore },
               ].map((tag) => (
                 <div
                   key={tag.label}
@@ -1088,6 +1129,7 @@ function InterviewScreen({
                 >
                   <span className={`w-1.5 h-1.5 rounded-full ${tag.color}`} />
                   {tag.label}
+                  {tag.value != null && <span className="font-bold ml-0.5">{tag.value}</span>}
                 </div>
               ))}
             </div>

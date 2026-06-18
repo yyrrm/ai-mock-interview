@@ -39,6 +39,7 @@ from modules.question.question_module import (
 from models import db, ensure_database, database_url
 from auth import auth_bp
 from records import records_bp
+from pose import pose_bp
 
 app = Flask(__name__, static_folder=None)
 
@@ -64,6 +65,7 @@ with app.app_context():
 
 app.register_blueprint(auth_bp)
 app.register_blueprint(records_bp)
+app.register_blueprint(pose_bp)
 
 
 # ===============================

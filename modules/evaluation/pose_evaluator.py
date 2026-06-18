@@ -72,6 +72,7 @@ class PoseEvaluator:
         self.sway_n = 0
 
         self.session_start = time.time()
+        self._anchored = False  # 첫 update 시점으로 session_start 를 보정했는지
         self.gesture_count = 0
         self._last_gesture_ts = 0.0
         self.gesture_move_threshold = float(gesture_move_threshold)
@@ -85,16 +86,26 @@ class PoseEvaluator:
             gesture_cooldown_sec=self.gesture_cooldown_sec,
         )
 
-    def update(self, coords: Optional[np.ndarray]) -> Optional[PoseEvalResult]:
+    def update(self, coords: Optional[np.ndarray], now: Optional[float] = None) -> Optional[PoseEvalResult]:
         """
     최신 관절 좌표를 입력받아 내부 상태를 갱신하고
     현재 프레임 기준의 자세 평가 결과를 반환한다.
 
     - 관절 좌표가 None일 경우(인식 실패),
       평가를 수행하지 않고 None을 반환한다.
+    - now: 프레임 시각(초). 미지정 시 time.time() 사용(데스크톱 실시간 경로).
+      웹처럼 프레임을 모아 한꺼번에 처리할 때는 각 프레임의 실제 시각을 주입해야
+      흔들림(프레임 간격)과 제스처(쿨다운) 계산이 어긋나지 않는다.
     """
         if coords is None or not isinstance(coords, np.ndarray) or coords.shape[0] < 25:
             return None
+
+        if now is None:
+            now = time.time()
+        # 첫 프레임 시각을 세션 시작으로 고정 → 경과 시간/제스처 빈도가 정확해진다.
+        if not self._anchored:
+            self.session_start = now
+            self._anchored = True
 
         # ---- tilt (shoulders) ----
         l_sh = coords[self.L_SHOULDER][:2]
@@ -121,7 +132,6 @@ class PoseEvaluator:
         # ---- gesture counting (wrists movement bursts) ----
         lw = coords[self.L_WRIST][:2]
         rw = coords[self.R_WRIST][:2]
-        now = time.time()
         if self.prev_wrists is not None:
             prev_lw, prev_rw = self.prev_wrists
             move = float(np.linalg.norm(lw - prev_lw) + np.linalg.norm(rw - prev_rw))
