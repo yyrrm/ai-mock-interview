@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+줘import { useState, useEffect, useRef, useCallback } from "react";
 import { RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell } from "recharts";
 
 type Screen = "home" | "prep" | "interview" | "result" | "history";
@@ -25,29 +25,13 @@ const COVER_SECTIONS = [
 
 type CoverSections = Record<string, string>;
 
-// ── 면접 기록 (localStorage, 로그인 사용자별 저장) ──────────────
+// ── 면접 기록 (MySQL, /api/records 로 저장·조회) ──────────────
 type InterviewRecord = {
-  id: string;
-  date: string; // ISO
+  id: number;
+  date: string; // ISO (서버 created_at)
   overall: number;
   scores: { name: string; score: number }[];
 };
-
-const recordsKey = (user: string) => `interview_records_${user || "guest"}`;
-
-function loadRecords(user: string): InterviewRecord[] {
-  try {
-    return JSON.parse(localStorage.getItem(recordsKey(user)) || "[]");
-  } catch {
-    return [];
-  }
-}
-
-function saveRecord(user: string, rec: InterviewRecord) {
-  const arr = loadRecords(user);
-  arr.unshift(rec);
-  localStorage.setItem(recordsKey(user), JSON.stringify(arr));
-}
 
 const RESULT_DATA = {
   radar: [
@@ -84,6 +68,7 @@ export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [userName, setUserName] = useState("");
   const [authModal, setAuthModal] = useState<{ mode: "login" | "signup"; onSuccess?: () => void } | null>(null);
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
 
   // AI 면접 상태
   const [questions, setQuestions] = useState<string[]>([]); // 누적된 질문들
@@ -92,6 +77,38 @@ export default function App() {
   const [guidance, setGuidance] = useState("");              // 질문 비중 지침
   const [answer, setAnswer] = useState("");                  // 현재 질문에 대한 답변 메모
   const [busy, setBusy] = useState(false);                   // API 호출 중
+
+  // 앱 로드 시 세션 복원 — 새로고침해도 로그인 유지
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data?.ok && data.user) {
+          setIsLoggedIn(true);
+          setUserName(data.user.name);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleLogout = async () => {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } catch {
+      // 네트워크 오류여도 클라이언트 상태는 비운다
+    }
+    setIsLoggedIn(false);
+    setUserName("");
+  };
+
+  // 탈퇴 성공(비밀번호 확인 통과) 후 처리 — 실제 API 호출은 DeleteAccountModal 이 담당
+  const handleAccountDeleted = () => {
+    setDeleteModalOpen(false);
+    setIsLoggedIn(false);
+    setUserName("");
+    navigate("home");
+    alert("탈퇴가 완료되었습니다. 그동안 이용해 주셔서 감사합니다.");
+  };
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const prepVideoRef = useRef<HTMLVideoElement>(null);
@@ -192,7 +209,7 @@ export default function App() {
   const nextQuestion = async () => {
     if (busy) return;
     if (questions.length >= TARGET_QUESTIONS) {
-      endInterview(false);
+      await endInterview(false);
       return;
     }
     setBusy(true);
@@ -221,19 +238,25 @@ export default function App() {
     setBusy(false);
   };
 
-  const endInterview = (isAbandoned: boolean) => {
+  const endInterview = async (isAbandoned: boolean) => {
     stopCamera();
-    // 끝까지 완료한 면접만 기록으로 저장한다.
+    // 끝까지 완료한 면접만 기록으로 저장한다 (로그인 사용자 기준, 서버 DB).
+    // 저장 완료를 await 해서 결과/기록 화면 진입 시 누락(경쟁 조건)을 막는다.
     if (!isAbandoned) {
       const overall = Math.round(
         RESULT_DATA.scores.reduce((acc, s) => acc + s.score, 0) / RESULT_DATA.scores.length
       );
-      saveRecord(userName, {
-        id: String(new Date().getTime()),
-        date: new Date().toISOString(),
-        overall,
-        scores: RESULT_DATA.scores.map((s) => ({ name: s.name, score: s.score })),
-      });
+      const scores = RESULT_DATA.scores.map((s) => ({ name: s.name, score: s.score }));
+      try {
+        const res = await fetch("/api/records", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ overall, scores }),
+        });
+        if (!res.ok) console.warn("면접 기록 저장 실패:", res.status);
+      } catch {
+        console.warn("면접 기록 저장 중 네트워크 오류");
+      }
     }
     setAbandoned(isAbandoned);
     setScreen("result");
@@ -254,7 +277,8 @@ export default function App() {
             userName={userName}
             onStart={handleStartClick}
             onAuth={(mode) => setAuthModal({ mode })}
-            onLogout={() => { setIsLoggedIn(false); setUserName(""); }}
+            onLogout={handleLogout}
+            onDeleteAccount={() => setDeleteModalOpen(true)}
             onHistory={() => navigate("history")}
           />
         )}
@@ -310,6 +334,13 @@ export default function App() {
           }}
         />
       )}
+
+      {deleteModalOpen && (
+        <DeleteAccountModal
+          onClose={() => setDeleteModalOpen(false)}
+          onDeleted={handleAccountDeleted}
+        />
+      )}
     </div>
   );
 }
@@ -322,6 +353,7 @@ function HomeScreen({
   onStart,
   onAuth,
   onLogout,
+  onDeleteAccount,
   onHistory,
 }: {
   isLoggedIn: boolean;
@@ -329,6 +361,7 @@ function HomeScreen({
   onStart: () => void;
   onAuth: (m: "login" | "signup") => void;
   onLogout: () => void;
+  onDeleteAccount: () => void;
   onHistory: () => void;
 }) {
   return (
@@ -372,6 +405,13 @@ function HomeScreen({
                 className="px-3 py-1.5 text-white/60 text-sm hover:text-white transition-colors"
               >
                 로그아웃
+              </button>
+              <button
+                data-testid="button-delete-account"
+                onClick={onDeleteAccount}
+                className="px-3 py-1.5 text-white/40 text-sm hover:text-red-300 transition-colors"
+              >
+                회원 탈퇴
               </button>
             </>
           ) : (
@@ -1359,7 +1399,16 @@ function HistoryScreen({
   userName: string;
   onBack: () => void;
 }) {
-  const records = loadRecords(userName);
+  const [records, setRecords] = useState<InterviewRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch("/api/records")
+      .then((r) => (r.ok ? r.json() : { records: [] }))
+      .then((d) => setRecords(d.records || []))
+      .catch(() => setRecords([]))
+      .finally(() => setLoading(false));
+  }, []);
 
   const fmtDate = (iso: string) => {
     const d = new Date(iso);
@@ -1383,7 +1432,9 @@ function HistoryScreen({
       </nav>
 
       <div className="flex-1 max-w-3xl mx-auto w-full px-6 py-10">
-        {records.length === 0 ? (
+        {loading ? (
+          <div className="text-center py-20 text-muted-foreground">불러오는 중...</div>
+        ) : records.length === 0 ? (
           <div className="text-center py-20">
             <div className="w-16 h-16 rounded-full bg-[hsl(var(--secondary))] flex items-center justify-center mx-auto mb-4">
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="hsl(var(--muted-foreground))" strokeWidth="1.8">
@@ -1443,11 +1494,28 @@ function AuthModal({
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!email || !password) { setError("이메일과 비밀번호를 입력해 주세요."); return; }
     if (tab === "signup" && !name) { setError("이름을 입력해 주세요."); return; }
-    onSuccess(tab === "signup" ? name : email.split("@")[0]);
+    setSubmitting(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/auth/${tab}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          tab === "signup" ? { name, email, password } : { email, password }
+        ),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.msg || "요청에 실패했습니다.");
+      onSuccess(data.user.name); // 부모가 모달을 닫고 로그인 상태로 전환
+    } catch (err: any) {
+      setError(err.message || "오류가 발생했습니다.");
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -1533,9 +1601,10 @@ function AuthModal({
           <button
             data-testid="button-auth-submit"
             onClick={handleSubmit}
-            className="mt-1 navy-gradient text-white font-bold py-3 rounded-xl shadow hover:shadow-md hover:scale-105 active:scale-100 transition-all duration-150"
+            disabled={submitting}
+            className="mt-1 navy-gradient text-white font-bold py-3 rounded-xl shadow hover:shadow-md hover:scale-105 active:scale-100 transition-all duration-150 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100"
           >
-            {tab === "login" ? "로그인" : "회원가입"}
+            {submitting ? "처리 중..." : tab === "login" ? "로그인" : "회원가입"}
           </button>
         </div>
 
@@ -1548,6 +1617,107 @@ function AuthModal({
             {tab === "login" ? "회원가입" : "로그인"}
           </button>
         </p>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────── DELETE ACCOUNT MODAL ─────────────────────── */
+
+function DeleteAccountModal({
+  onClose,
+  onDeleted,
+}: {
+  onClose: () => void;
+  onDeleted: () => void;
+}) {
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleDelete = async () => {
+    if (!password) { setError("비밀번호를 입력해 주세요."); return; }
+    setSubmitting(true);
+    setError("");
+    try {
+      const res = await fetch("/api/auth/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.msg || "탈퇴 처리에 실패했습니다.");
+      }
+      onDeleted();
+    } catch (err: any) {
+      setError(err.message || "오류가 발생했습니다.");
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="navy-card rounded-2xl w-full max-w-sm mx-4 p-8 shadow-2xl screen-enter relative"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          onClick={onClose}
+          className="absolute top-4 right-4 text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+            <path d="M18 6 6 18M6 6l12 12"/>
+          </svg>
+        </button>
+
+        <div className="text-center mb-6">
+          <div className="w-10 h-10 rounded-xl bg-red-500/10 flex items-center justify-center mx-auto mb-3">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2">
+              <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+              <path d="M10 11v6M14 11v6"/>
+            </svg>
+          </div>
+          <h3 className="font-bold text-[hsl(var(--primary))] text-lg">정말 탈퇴하시겠어요?</h3>
+          <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+            계정과 <b>모든 면접 기록</b>이 영구적으로 삭제되며,<br />되돌릴 수 없습니다.
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-3">
+          <label className="text-xs font-medium text-muted-foreground px-1">
+            본인 확인을 위해 비밀번호를 입력해 주세요.
+          </label>
+          <input
+            data-testid="input-delete-password"
+            type="password"
+            placeholder="비밀번호"
+            autoFocus
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleDelete()}
+            className="w-full px-4 py-3 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] text-sm focus:outline-none focus:ring-2 focus:ring-red-400"
+          />
+          {error && <p className="text-red-500 text-xs px-1">{error}</p>}
+          <button
+            data-testid="button-confirm-delete"
+            onClick={handleDelete}
+            disabled={submitting}
+            className="mt-1 bg-red-500 text-white font-bold py-3 rounded-xl shadow hover:bg-red-600 active:scale-100 transition-all duration-150 disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            {submitting ? "처리 중..." : "회원 탈퇴"}
+          </button>
+          <button
+            onClick={onClose}
+            disabled={submitting}
+            className="text-sm text-muted-foreground hover:text-foreground transition-colors py-1 disabled:opacity-60"
+          >
+            취소
+          </button>
+        </div>
       </div>
     </div>
   );
