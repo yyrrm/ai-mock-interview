@@ -55,7 +55,8 @@ def voice_worker(rate=16000):
             print("전처리 완료", flush=True)
 
             print("STT 처리 중...", flush=True)
-            text = google_stt(audio_path) or "(음성 없음)"
+            stt_text, stt_confidence = google_stt(audio_path)
+            text = stt_text or "(음성 없음)"
             print(f"\n[Voice Recognized]\n>> {text}", flush=True)
 
             t = (text or "").strip()
@@ -64,9 +65,10 @@ def voice_worker(rate=16000):
                 # 인식 실패 → 평가 생략, 기본 피드백
                 score, feedback = _no_speech_result()
             else:
-                # 평가지표 기반 실제 음성 평가 (말속도 WPM / 음량 / 침묵)
+                # 평가지표 기반 실제 음성 평가
+                # (말속도 WPM / 음량 / 침묵 + 기준문장 없으면 STT 신뢰도로 명료도)
                 try:
-                    res = evaluator.evaluate(audio_path, text)
+                    res = evaluator.evaluate(audio_path, text, stt_confidence=stt_confidence)
                     score = res.total_score
                     feedback = res.feedback
                     metrics = res.metrics
