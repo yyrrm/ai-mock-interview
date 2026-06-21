@@ -4,6 +4,9 @@ import wave
 import numpy as np
 import time
 
+# 종료 신호 확인용. shared_flags 는 의존성이 없는 말단 모듈이라 순환 import 위험이 없음.
+import modules.shared_flags as flags
+
 # ======================================
 # 1) 말하면 녹음 시작 → 무음이면 종료
 # ======================================
@@ -30,29 +33,33 @@ def record_until_silence(output_path="temp.wav", rate=16000, silence_limit=1.2):
     triggered = False
     silence_start = None
 
-    while True:
-        data = stream.read(CHUNK)
-        frames.append(data)
+    # 예외가 발생해도 스트림/PyAudio 자원이 반드시 해제되도록 try/finally 처리
+    try:
+        # flags.RUNNING 도 함께 확인 → 사용자가 한 마디도 안 해도
+        # 종료 신호가 오면 루프를 빠져나갈 수 있게 함(무한 대기 방지)
+        while flags.RUNNING:
+            data = stream.read(CHUNK)
+            frames.append(data)
 
-        audio = np.frombuffer(data, dtype=np.int16)
-        vol = np.abs(audio).mean()
+            audio = np.frombuffer(data, dtype=np.int16)
+            vol = np.abs(audio).mean()
 
-        # 목소리 감지
-        if vol > 200:
-            triggered = True
-            silence_start = None
-        else:
-            if triggered and silence_start is None:
-                silence_start = time.time()
+            # 목소리 감지
+            if vol > 200:
+                triggered = True
+                silence_start = None
+            else:
+                if triggered and silence_start is None:
+                    silence_start = time.time()
 
-        # 말 멈춤 감지
-        if triggered and silence_start and time.time() - silence_start > silence_limit:
-            print("> 말 멈춤 감지 → 녹음 종료")
-            break
-
-    stream.stop_stream()
-    stream.close()
-    p.terminate()
+            # 말 멈춤 감지
+            if triggered and silence_start and time.time() - silence_start > silence_limit:
+                print("> 말 멈춤 감지 → 녹음 종료")
+                break
+    finally:
+        stream.stop_stream()
+        stream.close()
+        p.terminate()
 
     # WAV 저장
     wf = wave.open(output_path, "wb")

@@ -1,6 +1,10 @@
 import numpy as np
 emotion_buffer = []
 
+# 새 세션 시작 시 이전 세션의 이동평균 값이 섞이지 않도록 버퍼 초기화
+def reset_emotion_buffer():
+    emotion_buffer.clear()
+
 def emo_stabilizer(data, window_size = 5):
     if data is None:
         return None

@@ -24,22 +24,27 @@ if ROOT_DIR not in sys.path:
 # 진짜 UI(React) 빌드 결과물 폴더. frontend 에서 `npm run build` 하면 생성된다.
 DIST_DIR = os.path.join(ROOT_DIR, "frontend", "dist")
 
-from dotenv import load_dotenv
+# 아래 import 들은 위의 sys.path 설정(루트 추가) 이후에 와야 하므로
+# 의도적으로 파일 상단이 아닌 이 위치에 둔다(E402 경고는 noqa 로 무시).
+from dotenv import load_dotenv  # noqa: E402
 
 # .env (OPENAI_API_KEY, MYSQL_*, SECRET_KEY 등) 로드
 load_dotenv()
 
-from modules.question.question_module import (
+from modules.question.question_module import (  # noqa: E402
     analyze_resume,
     make_question,
     build_cover_letter_text,
     COVER_LETTER_SECTIONS,
     COVER_LETTER_GUIDANCE,
 )
-from models import db, ensure_database, database_url
-from auth import auth_bp
-from records import records_bp
-from pose import pose_bp
+from models import db, ensure_database, database_url  # noqa: E402
+from auth import auth_bp  # noqa: E402
+from records import records_bp  # noqa: E402
+from pose import pose_bp  # noqa: E402
+from face import face_bp  # noqa: E402
+from voice import voice_bp  # noqa: E402
+from tts import tts_bp  # noqa: E402
 
 app = Flask(__name__, static_folder=None)
 
@@ -66,6 +71,9 @@ with app.app_context():
 app.register_blueprint(auth_bp)
 app.register_blueprint(records_bp)
 app.register_blueprint(pose_bp)
+app.register_blueprint(face_bp)
+app.register_blueprint(voice_bp)
+app.register_blueprint(tts_bp)
 
 
 # ===============================

@@ -24,25 +24,27 @@ def record_until_silence(output_path="temp.wav", rate=16000, silence_limit=1.0):
     silence_chunks = int(silence_limit / 0.02)
     silence_counter = 0
 
-    while True:
-        data = stream.read(CHUNK)
-        frames.append(data)
+    # 예외가 발생해도 스트림/PyAudio 자원이 반드시 해제되도록 try/finally 처리
+    try:
+        while True:
+            data = stream.read(CHUNK)
+            frames.append(data)
 
-        pcm = np.frombuffer(data, dtype=np.int16)
-        is_speech = vad.is_speech(data, rate)
+            pcm = np.frombuffer(data, dtype=np.int16)
+            is_speech = vad.is_speech(data, rate)
 
-        if not is_speech:
-            silence_counter += 1
-        else:
-            silence_counter = 0
+            if not is_speech:
+                silence_counter += 1
+            else:
+                silence_counter = 0
 
-        if silence_counter > silence_chunks:
-            print("<> 말이 멈춰서 녹음 종료됩니다.")
-            break
-
-    stream.stop_stream()
-    stream.close()
-    p.terminate()
+            if silence_counter > silence_chunks:
+                print("<> 말이 멈춰서 녹음 종료됩니다.")
+                break
+    finally:
+        stream.stop_stream()
+        stream.close()
+        p.terminate()
 
     wf = wave.open(output_path, 'wb')
     wf.setnchannels(CHANNELS)

@@ -87,7 +87,11 @@ class GazeTracker:
         """
         image.setflags(write=False)
         image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        #image_rgb = cv2.flip(image_rgb, 1)
+        # 좌우반전 (사용자 기준): 셀피(거울) 화면으로 맞춰야
+        # 아래 좌우 판단(diff_x>0 => "Right")과 Left/Right 라벨/피드백이
+        # 사용자 기준(사용자의 왼쪽 == 화면의 왼쪽)과 일치한다.
+        # 참조 구현(gaze_direction.py / stabilized_gaze.py)도 동일하게 flip이 켜져 있음.
+        image_rgb = cv2.flip(image_rgb, 1)
         results = self.face_mesh.process(image_rgb)
         image.setflags(write=True)
         image = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
@@ -181,6 +185,10 @@ class GazeTracker:
                             self.gaze_direction_y = "Center"
 
                 except Exception:
+                    # 매 프레임 랜드마크 누락을 막기 위한 방어 (제거 금지).
+                    # TODO: 이 프레임 계산이 실패하면 gaze_direction_x/y가 직전 값으로
+                    #       남아(stale) 잘못된 방향이 누적될 수 있음. 동작 변경 위험이 있어
+                    #       지금은 로직을 바꾸지 않고 문서화만 함. (사람 검토 필요)
                     pass
 
         # --- UI 텍스트 표시 (그리기 함수 호출) ---

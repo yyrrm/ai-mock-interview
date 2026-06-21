@@ -14,9 +14,11 @@ const SEND_INTERVAL_MS = 300;
 
 type Frame = { t: number; landmarks: number[][] };
 
+export type PoseSummary = { score: number | null; feedback: string };
+
 export type PoseAnalyzerHandle = {
-  /** 분석을 멈추고 서버에 종료 신호 → 세션 평균 점수(없으면 null) 반환 */
-  stop: () => Promise<number | null>;
+  /** 분석을 멈추고 서버에 종료 신호 → 세션 평균 점수/피드백 반환 */
+  stop: () => Promise<PoseSummary>;
 };
 
 export async function startPoseAnalyzer(
@@ -103,9 +105,12 @@ export async function startPoseAnalyzer(
           body: JSON.stringify({ session_id: sessionId }),
         });
         const data = await res.json();
-        return data.ok && typeof data.score === "number" ? data.score : null;
+        return {
+          score: data.ok && typeof data.score === "number" ? data.score : null,
+          feedback: data.feedback || "",
+        };
       } catch {
-        return null;
+        return { score: null, feedback: "" };
       }
     },
   };

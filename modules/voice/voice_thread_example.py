@@ -48,8 +48,8 @@ def voice_worker(rate=16000):
             print(f"녹음 완료 → {audio_path}", flush=True)
             try:
                 print("파일 크기:", os.path.getsize(audio_path), "bytes", flush=True)
-            except:
-                pass
+            except Exception as e:
+                print("파일 크기 확인 실패:", e, flush=True)
 
             preprocess_audio(audio_path, rate)
             print("전처리 완료", flush=True)
@@ -93,8 +93,8 @@ def voice_worker(rate=16000):
             if voice_result_queue.full():
                 try:
                     voice_result_queue.get_nowait()
-                except:
-                    pass
+                except Exception as e:
+                    print("결과 큐 비우기 실패:", e, flush=True)
             voice_result_queue.put(result)
 
             # ===============================

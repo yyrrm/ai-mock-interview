@@ -125,6 +125,9 @@ while cap.isOpened():
                     gaze_direction_y = "Center"
 
             except Exception:
+                # 랜드마크 누락 방어 (제거 금지).
+                # 이 데모는 매 프레임 gaze_direction_x/y를 "Center"로 초기화(67~68행)하므로
+                # 실패해도 stale 값이 남지 않음.
                 pass
 
     # --- UI 텍스트 표시 ---

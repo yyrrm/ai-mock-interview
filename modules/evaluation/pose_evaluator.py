@@ -112,7 +112,9 @@ class PoseEvaluator:
         r_sh = coords[self.R_SHOULDER][:2]
         dy = float(r_sh[1] - l_sh[1])
         dx = float(r_sh[0] - l_sh[0])
-        theta = _deg(np.arctan2(dy, dx))
+        # abs(dx) 로 가로 성분 부호를 제거 → 카메라 미러링이나 좌/우 어깨 순서가
+        # 바뀌어도 기울기 각도가 ±180° 로 튀지 않고 0(수평) 기준으로 측정된다.
+        theta = _deg(np.arctan2(dy, abs(dx)))
         # when perfectly horizontal, dy=0 -> theta=0
         abs_theta = abs(theta)
 

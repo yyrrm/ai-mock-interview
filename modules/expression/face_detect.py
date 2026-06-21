@@ -1,7 +1,7 @@
 # 별도로 face_setup 기능이 불필요하다 판단하여 face_detect에 통합
 import cv2
-from emotion_detect import emotion_detect
-from emotion_stabilizer import emo_stabilizer
+from modules.expression.emotion_recorg import emotion_detect
+from modules.expression.emotion_stabilizer import emo_stabilizer
 
 def face_detect(video_path, detector=None, frame_interval=30, display=True):
     frame_crop = None
@@ -31,10 +31,18 @@ def face_detect(video_path, detector=None, frame_interval=30, display=True):
                     box = face[0]
                     x1, y1, x2, y2, conf = map(int, box[:5])
 
-                    frame_crop = frame[y1-20:y2+20, x1-20:x2+20]
+                    # 프레임 경계 클램프 후 crop
+                    h, w = frame.shape[:2]
+                    cx1 = max(0, x1 - 20)
+                    cy1 = max(0, y1 - 20)
+                    cx2 = min(w, x2 + 20)
+                    cy2 = min(h, y2 + 20)
+                    frame_crop = frame[cy1:cy2, cx1:cx2]
                     cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                     frame_path = "frame.jpg"
-                    cv2.imwrite(frame_path, frame_crop)
+                    # crop이 비어있으면 저장하지 않음
+                    if frame_crop is not None and frame_crop.size != 0:
+                        cv2.imwrite(frame_path, frame_crop)
 
                 emotion_result = emotion_detect("frame.jpg", detector)
                 emotion_result_smoothed = emo_stabilizer(emotion_result)

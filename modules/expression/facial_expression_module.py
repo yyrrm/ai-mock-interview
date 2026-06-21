@@ -16,6 +16,12 @@ au_buffer = []
 
 # 모듈 본체, cv2 입력/타 기능 함수 호출
 def run_module(video_path, detector=None, frame_interval=30, display=False):
+    # 새 세션 시작 시 이전 세션 값이 남지 않도록 전역 버퍼 초기화
+    global emotion_buffer, au_buffer
+    emotion_buffer.clear()
+    au_buffer.clear()
+    list_for_emo_plot.clear()
+
     frame_crop = None
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -44,12 +50,19 @@ def run_module(video_path, detector=None, frame_interval=30, display=False):
 
                         x1, y1, x2, y2, conf = map(int, box[:5])
 
-                        # 감지한 좌표 기준 F_Padding만큼 여유를 두고 crop
-                        frame_crop = frame[y1-F_PADDING:y2+F_PADDING, x1-F_PADDING:x2+F_PADDING]
+                        # 감지한 좌표 기준 F_Padding만큼 여유를 두고 crop (프레임 경계 클램프)
+                        h, w = frame.shape[:2]
+                        cx1 = max(0, x1 - F_PADDING)
+                        cy1 = max(0, y1 - F_PADDING)
+                        cx2 = min(w, x2 + F_PADDING)
+                        cy2 = min(h, y2 + F_PADDING)
+                        frame_crop = frame[cy1:cy2, cx1:cx2]
                         # 실제 감지 범위를 사격형으로 시현
                         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                         frame_path = "frame.jpg"
-                        cv2.imwrite(frame_path, frame_crop)
+                        # crop이 비어있으면 저장하지 않음
+                        if frame_crop is not None and frame_crop.size != 0:
+                            cv2.imwrite(frame_path, frame_crop)
 
                     # *Detector 호출, 단순 감정수치 및 AU 기반 분석 parameter에 이 변수 사용
                     fex_detect_result = detector.detect_image("frame.jpg")
@@ -67,11 +80,10 @@ def run_module(video_path, detector=None, frame_interval=30, display=False):
                     # 이동평균 계산 함수 호출, smoothing 적용 dict 반환
                     emotion_result_smoothed = emo_stabilize(emotion_result)
 
-                    # 전역으로 선언한 시각화용 list에 저장
-                    list_for_emo_plot.append(emotion_result_smoothed["smoothed"])
-
                     # 콘솔 출력, 다른 interface로 출력 필요 시 이 부분 수정
                     if emotion_result_smoothed is not None:
+                        # 전역으로 선언한 시각화용 list에 저장
+                        list_for_emo_plot.append(emotion_result_smoothed["smoothed"])
                         print("원본 감정 수치:", emotion_result["emotions"])
                         print("이동평균:", emotion_result_smoothed["smoothed"])
                         print("최대 감정:", emotion_result["dominant"])
@@ -84,8 +96,8 @@ def run_module(video_path, detector=None, frame_interval=30, display=False):
                         cv2.imshow("Frame", frame_crop)
                         if cv2.waitKey(1) & 0xFF == ord('q'):
                             break
-            except:
-                print("Face detection error")
+            except Exception as e:
+                print("Face detection error:", e)
         frame_count += 1
 
     cap.release()

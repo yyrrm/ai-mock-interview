@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell } from "recharts";
+import { RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, ResponsiveContainer } from "recharts";
 import { startPoseAnalyzer, type PoseAnalyzerHandle } from "./poseAnalyzer";
+import { startFaceAnalyzer, type FaceAnalyzerHandle } from "./faceAnalyzer";
+import { startVoiceAnalyzer, type VoiceAnalyzerHandle } from "./voiceAnalyzer";
 
 type Screen = "home" | "prep" | "interview" | "result" | "history";
 
@@ -13,8 +15,10 @@ const QUESTIONS = [
   "지원하신 직무와 관련하여 본인의 역량을 어필해 주세요.",
 ];
 
-// 한 번의 면접에서 진행할 질문 개수 (AI가 동적으로 생성)
-const TARGET_QUESTIONS = 5;
+// 한 번의 면접에서 진행할 질문 개수 (AI가 동적으로 생성).
+// 사용자가 면접 준비 화면에서 아래 후보 중 하나를 고른다.
+const QUESTION_COUNT_OPTIONS = [5, 10, 15] as const;
+const DEFAULT_QUESTION_COUNT = 5;
 
 // 자기소개서 문항 (백엔드 COVER_LETTER_SECTIONS 와 key 일치)
 const COVER_SECTIONS = [
@@ -26,6 +30,120 @@ const COVER_SECTIONS = [
 
 type CoverSections = Record<string, string>;
 
+// 직무(지원 포지션) 드롭다운 후보. 목록에 없으면 "기타"를 골라 직접 입력한다.
+// 산업군 편향을 줄이기 위해 카테고리(optgroup)별로 다양한 직무를 제공한다.
+// 직무는 면접 주제 문자열로만 쓰이므로(백엔드 question_module 의 topic) 자유롭게 늘려도 된다.
+const JOB_ROLE_GROUPS = [
+  {
+    label: "IT/개발",
+    roles: [
+      "백엔드 개발자",
+      "프론트엔드 개발자",
+      "풀스택 개발자",
+      "모바일 앱 개발자",
+      "데이터 분석가",
+      "데이터 엔지니어",
+      "AI/ML 엔지니어",
+      "DevOps/인프라 엔지니어",
+      "QA/테스트 엔지니어",
+      "보안 엔지니어",
+    ],
+  },
+  {
+    label: "기획/디자인",
+    roles: [
+      "기획/PM",
+      "서비스 기획자",
+      "UX/UI 디자이너",
+      "그래픽/비주얼 디자이너",
+      "콘텐츠 에디터",
+    ],
+  },
+  {
+    label: "마케팅/영업",
+    roles: [
+      "마케팅",
+      "퍼포먼스 마케터",
+      "브랜드 마케터",
+      "영업/세일즈",
+      "해외영업",
+      "MD/상품기획",
+      "고객지원/CS",
+    ],
+  },
+  {
+    label: "경영/사무",
+    roles: [
+      "경영지원/총무",
+      "인사/HR",
+      "재무/회계",
+      "법무",
+      "전략기획",
+    ],
+  },
+  {
+    label: "금융",
+    roles: [
+      "은행/금융 일반",
+      "증권/자산운용",
+      "보험",
+      "리스크/심사",
+    ],
+  },
+  {
+    label: "생산/엔지니어링",
+    roles: [
+      "생산/제조 관리",
+      "품질관리(QC)",
+      "기계 설계 엔지니어",
+      "전기/전자 엔지니어",
+      "화학/공정 엔지니어",
+      "건축/토목",
+      "물류/SCM",
+    ],
+  },
+  {
+    label: "보건/교육/공공",
+    roles: [
+      "간호사",
+      "의료/보건",
+      "교사/강사",
+      "연구원",
+      "공무원/공공기관",
+      "사회복지",
+    ],
+  },
+  {
+    label: "서비스/미디어",
+    roles: [
+      "호텔/관광",
+      "F&B/외식",
+      "방송/미디어",
+      "PD/기자",
+      "통번역",
+    ],
+  },
+] as const;
+
+// 그룹을 펼친 평면 직무 목록(검증·다른 화면에서 단순 목록이 필요할 때 사용).
+const JOB_ROLES = JOB_ROLE_GROUPS.flatMap((g) => g.roles);
+
+const JOB_CUSTOM = "__custom__"; // 드롭다운에서 "기타(직접 입력)"를 나타내는 값
+
+// 직무·경력 선택값을 질문 생성용 면접 주제 문자열로 조립한다.
+// 예) "백엔드 개발자 (경력 3년) 면접", "마케팅 (신입) 면접", 미설정 시 "면접".
+function buildTopic(role: string, career: "junior" | "senior", years: string): string {
+  const job = role.trim();
+  if (!job) return "면접";
+  let level = "";
+  if (career === "junior") level = " (신입)";
+  else {
+    const y = years.trim();
+    level = y ? ` (경력 ${y}년)` : " (경력)";
+  }
+  return `${job}${level} 면접`;
+}
+
 // ── 면접 기록 (MySQL, /api/records 로 저장·조회) ──────────────
 type InterviewRecord = {
   id: number;
@@ -34,28 +152,47 @@ type InterviewRecord = {
   scores: { name: string; score: number }[];
 };
 
-const RESULT_DATA = {
-  radar: [
-    { subject: "표정 자신감", A: 82, fullMark: 100 },
-    { subject: "시선 안정성", A: 74, fullMark: 100 },
-    { subject: "자세 바름", A: 88, fullMark: 100 },
-    { subject: "발화 명확성", A: 79, fullMark: 100 },
-    { subject: "답변 구성", A: 85, fullMark: 100 },
-    { subject: "반응 속도", A: 71, fullMark: 100 },
-  ],
-  scores: [
-    { name: "표정 분석", score: 82, color: "#1e3a6e" },
-    { name: "시선 추적", score: 74, color: "#3b82f6" },
-    { name: "자세 평가", score: 88, color: "#1e40af" },
-    { name: "음성 분석", score: 79, color: "#2563eb" },
-  ],
-  feedback: [
-    { type: "good", text: "전반적으로 자신감 있는 표정을 유지하셨습니다." },
-    { type: "good", text: "답변 구조가 명확하고 논리적이었습니다." },
-    { type: "improve", text: "시선이 좌측 하단으로 쏠리는 경향이 있습니다. 카메라를 정면으로 바라보세요." },
-    { type: "improve", text: "발화 속도를 조금 더 천천히 조절하면 좋겠습니다." },
-  ],
+// 분석 채널 메타 — 이름(막대/기록) · 레이더 라벨 · 막대 색.
+// 결과 화면·면접 기록은 아래 4개 채널의 '실제' 세션 평균 점수로 그려진다.
+const CHANNELS = [
+  { key: "expression", name: "표정 분석", radar: "표정 자신감", color: "#1e3a6e" },
+  { key: "gaze", name: "시선 추적", radar: "시선 안정성", color: "#3b82f6" },
+  { key: "pose", name: "자세 평가", radar: "자세 안정", color: "#1e40af" },
+  { key: "voice", name: "음성 분석", radar: "발화 전달력", color: "#2563eb" },
+] as const;
+
+type ChannelKey = (typeof CHANNELS)[number]["key"];
+type ChannelScores = Record<ChannelKey, number | null>;
+type ChannelFeedback = Record<ChannelKey, string>;
+
+type InterviewResult = {
+  overall: number;
+  scores: { name: string; score: number; color: string }[];
+  radar: { subject: string; A: number }[];
+  feedback: { type: "good" | "improve"; text: string }[];
 };
+
+// 실제 분석 채널 점수/피드백으로 결과 리포트 데이터를 만든다.
+// 측정되지 않은 채널(점수 null)은 제외하고, 종합점수는 측정된 것들의 평균.
+function buildResult(scores: ChannelScores, fb: ChannelFeedback): InterviewResult {
+  const items = CHANNELS.map((c) => ({ ...c, score: scores[c.key], feedback: fb[c.key] })).filter(
+    (c): c is typeof c & { score: number } => c.score != null
+  );
+  const overall = items.length
+    ? Math.round(items.reduce((a, c) => a + c.score, 0) / items.length)
+    : 0;
+  return {
+    overall,
+    scores: items.map((c) => ({ name: c.name, score: c.score, color: c.color })),
+    radar: items.map((c) => ({ subject: c.radar, A: c.score })),
+    feedback: items
+      .filter((c) => c.feedback)
+      .map((c) => ({
+        type: c.score >= 80 ? ("good" as const) : ("improve" as const),
+        text: `[${c.name}] ${c.feedback}`,
+      })),
+  };
+}
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("home");
@@ -76,12 +213,20 @@ export default function App() {
   const [asked, setAsked] = useState<string[]>([]);          // 중복 방지용
   const [resumeText, setResumeText] = useState("");          // 자기소개서 합본 텍스트
   const [guidance, setGuidance] = useState("");              // 질문 비중 지침
+  const [topic, setTopic] = useState("면접");                // 면접 주제(직무·경력 조립값) — 첫 질문·꼬리 질문 생성에 사용
+  const [targetQuestions, setTargetQuestions] = useState(DEFAULT_QUESTION_COUNT); // 이번 면접 질문 개수(사용자 선택)
   const [answer, setAnswer] = useState("");                  // 현재 질문에 대한 답변 메모
   const [busy, setBusy] = useState(false);                   // API 호출 중
   const [poseScore, setPoseScore] = useState<number | null>(null); // 실시간 자세 점수
+  const [exprScore, setExprScore] = useState<number | null>(null); // 실시간 표정 점수
+  const [gazeScore, setGazeScore] = useState<number | null>(null); // 실시간 시선 점수
+  const [result, setResult] = useState<InterviewResult | null>(null); // 최종 결과 리포트
 
-  // 자세 분석(브라우저 MediaPipe) 핸들 / 세션 ID
+  // 분석기(브라우저 MediaPipe / Web Audio) 핸들 / 세션 ID
   const poseRef = useRef<PoseAnalyzerHandle | null>(null);
+  const faceRef = useRef<FaceAnalyzerHandle | null>(null);
+  const voiceRef = useRef<VoiceAnalyzerHandle | null>(null);
+  const answersRef = useRef<string[]>([]); // 음성 단어수 폴백용(STT 미지원 시) 답변 누적
   const sessionIdRef = useRef<string>("");
 
   // 앱 로드 시 세션 복원 — 새로고침해도 로그인 유지
@@ -124,14 +269,28 @@ export default function App() {
   const navigate = useCallback(
     (to: Screen) => {
       if (animating) return;
+      // 브라우저 뒤로/앞으로 가기가 동작하도록 화면 전환을 history 에 기록한다.
+      if (to !== screen) window.history.pushState({ screen: to }, "");
       setAnimating(true);
       setTimeout(() => {
         setScreen(to);
         setAnimating(false);
       }, 300);
     },
-    [animating]
+    [animating, screen]
   );
+
+  // 브라우저 뒤로/앞으로 가기 → 해당 화면으로 복원 (history 에 push 하지 않음)
+  useEffect(() => {
+    window.history.replaceState({ screen: "home" }, "");
+    const onPop = (e: PopStateEvent) => {
+      const to: Screen = (e.state && e.state.screen) || "home";
+      setAnimating(false);
+      setScreen(to);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
 
   const startCamera = useCallback(async (ref: React.RefObject<HTMLVideoElement | null>) => {
     try {
@@ -158,18 +317,44 @@ export default function App() {
     if (screen === "prep") {
       startCamera(prepVideoRef);
     } else if (screen === "interview") {
-      startCamera(videoRef);
       timerRef.current = setInterval(() => setTimer((t) => t + 1), 1000);
-      // 실시간 자세 분석 시작 (브라우저 MediaPipe → 서버 PoseEvaluator)
       setPoseScore(null);
-      if (videoRef.current && sessionIdRef.current) {
-        startPoseAnalyzer(videoRef.current, sessionIdRef.current, (s) => setPoseScore(s))
-          .then((h) => {
-            if (cancelled) h.stop();
-            else poseRef.current = h;
+      setExprScore(null);
+      setGazeScore(null);
+      // 카메라(영상+오디오) 준비 후 자세·표정·시선·음성 분석을 동시에 시작한다.
+      // (음성 분석은 getUserMedia 스트림이 필요하므로 카메라 준비를 await 한다.)
+      (async () => {
+        await startCamera(videoRef);
+        if (cancelled) return;
+        const sid = sessionIdRef.current;
+        if (videoRef.current && sid) {
+          // 자세: 브라우저 PoseLandmarker → 서버 PoseEvaluator
+          startPoseAnalyzer(videoRef.current, sid, (s) => setPoseScore(s))
+            .then((h) => {
+              if (cancelled) h.stop();
+              else poseRef.current = h;
+            })
+            .catch((e) => console.warn("자세 분석 시작 실패:", e));
+          // 표정·시선: 브라우저 FaceLandmarker → 서버 Expression/GazeEvaluator
+          startFaceAnalyzer(videoRef.current, sid, ({ expression, gaze }) => {
+            if (expression != null) setExprScore(expression);
+            if (gaze != null) setGazeScore(gaze);
           })
-          .catch((e) => console.warn("자세 분석 시작 실패:", e));
-      }
+            .then((h) => {
+              if (cancelled) h.stop();
+              else faceRef.current = h;
+            })
+            .catch((e) => console.warn("표정/시선 분석 시작 실패:", e));
+        }
+        // 음성: 브라우저 Web Audio/Web Speech → 서버 VoiceEvaluator
+        if (streamRef.current) {
+          try {
+            voiceRef.current = startVoiceAnalyzer(streamRef.current);
+          } catch (e) {
+            console.warn("음성 분석 시작 실패:", e);
+          }
+        }
+      })();
     } else {
       stopCamera();
       if (timerRef.current) clearInterval(timerRef.current);
@@ -177,11 +362,19 @@ export default function App() {
     return () => {
       cancelled = true;
       if (timerRef.current) clearInterval(timerRef.current);
-      // 면접을 정상 종료하면 endInterview 에서 stop(평균 회수) 후 null 로 비움.
-      // 그 외 경로로 화면이 바뀌면 여기서 정리한다.
+      // 면접을 정상 종료하면 endInterview 에서 stop(평균 회수) 후 null 로 비운다.
+      // 그 외 경로로 화면이 바뀌면 여기서 안전하게 정리한다.
       if (poseRef.current) {
         poseRef.current.stop();
         poseRef.current = null;
+      }
+      if (faceRef.current) {
+        faceRef.current.stop();
+        faceRef.current = null;
+      }
+      if (voiceRef.current) {
+        voiceRef.current.stop();
+        voiceRef.current = null;
       }
     };
   }, [screen, startCamera, stopCamera]);
@@ -198,10 +391,14 @@ export default function App() {
   };
 
   // 자기소개서를 분석해 첫 질문을 받고 면접을 시작한다.
-  const goToInterview = async (sections: CoverSections) => {
+  // jobTopic: 직무·경력을 조립한 면접 주제 문자열(미설정 시 "면접").
+  // count: 이번 면접에서 진행할 질문 개수(사용자 선택).
+  const goToInterview = async (sections: CoverSections, jobTopic: string, count: number) => {
     // 자세 분석용 세션 ID 발급 (면접 화면 진입 시 분석기가 사용)
     sessionIdRef.current = "pose_" + Date.now() + "_" + Math.floor(Math.random() * 1e6);
     setBusy(true);
+    setTopic(jobTopic); // 꼬리 질문(nextQuestion)에서도 같은 주제를 쓰도록 저장
+    setTargetQuestions(count); // 종료 판정·진행 표시에 사용
     let firstQ = QUESTIONS[0];
     let rt = "";
     let gd = "";
@@ -209,7 +406,7 @@ export default function App() {
       const res = await fetch("/api/cover-letter", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ topic: "면접", sections }),
+        body: JSON.stringify({ topic: jobTopic, sections }),
       });
       const data = await res.json();
       if (data.ok) {
@@ -225,6 +422,7 @@ export default function App() {
     setQuestions([firstQ]);
     setAsked([firstQ]);
     setAnswer("");
+    answersRef.current = []; // 새 면접 시작 → 답변 누적 초기화
     setCurrentQ(0);
     setTimer(0);
     setBusy(false);
@@ -235,7 +433,7 @@ export default function App() {
   // 직전 답변을 바탕으로 다음 질문을 생성한다. 목표 개수에 도달하면 면접 종료.
   const nextQuestion = async () => {
     if (busy) return;
-    if (questions.length >= TARGET_QUESTIONS) {
+    if (questions.length >= targetQuestions) {
       await endInterview(false);
       return;
     }
@@ -247,7 +445,7 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           answer_text: answer,
-          topic: "면접",
+          topic,
           previous_questions: asked,
           resume_context: resumeText,
           guidance,
@@ -258,6 +456,7 @@ export default function App() {
     } catch {
       // 오류 시 폴백 질문 사용
     }
+    if (answer.trim()) answersRef.current.push(answer.trim());
     setQuestions((qs) => [...qs, nextQ]);
     setAsked((a) => [...a, nextQ]);
     setAnswer("");
@@ -267,29 +466,48 @@ export default function App() {
 
   const endInterview = async (isAbandoned: boolean) => {
     stopCamera();
-    // 자세 분석 종료 → 세션 평균 점수 회수 (있으면 기록에 실제 점수로 반영)
-    let poseAvg: number | null = null;
-    if (poseRef.current) {
-      poseAvg = await poseRef.current.stop();
-      poseRef.current = null;
-    }
-    // 끝까지 완료한 면접만 기록으로 저장한다 (로그인 사용자 기준, 서버 DB).
+    if (answer.trim()) answersRef.current.push(answer.trim()); // 마지막 답변 반영
+
+    // 4개 분석기를 종료하고 세션 평균 점수/피드백을 회수한다.
+    const pose = poseRef.current
+      ? await poseRef.current.stop()
+      : { score: null as number | null, feedback: "" };
+    poseRef.current = null;
+    const face = faceRef.current
+      ? await faceRef.current.stop()
+      : { expression: null, gaze: null, expressionFeedback: "", gazeFeedback: "" };
+    faceRef.current = null;
+    const voice = voiceRef.current
+      ? await voiceRef.current.stop({ fallbackText: answersRef.current.join(" ") })
+      : { score: null as number | null, feedback: "" };
+    voiceRef.current = null;
+
+    const scores: ChannelScores = {
+      expression: face.expression,
+      gaze: face.gaze,
+      pose: pose.score,
+      voice: voice.score,
+    };
+    const fb: ChannelFeedback = {
+      expression: face.expressionFeedback,
+      gaze: face.gazeFeedback,
+      pose: pose.feedback,
+      voice: voice.feedback,
+    };
+    const built = buildResult(scores, fb);
+    setResult(built);
+
+    // 끝까지 완료 + 측정된 점수가 하나라도 있으면 기록으로 저장한다(로그인 사용자, 서버 DB).
     // 저장 완료를 await 해서 결과/기록 화면 진입 시 누락(경쟁 조건)을 막는다.
-    if (!isAbandoned) {
-      // "자세 평가"는 실제 분석 평균으로 교체, 나머지(표정/시선/음성)는 아직 데모 수치
-      const scores = RESULT_DATA.scores.map((s) =>
-        s.name === "자세 평가" && poseAvg != null
-          ? { name: s.name, score: poseAvg }
-          : { name: s.name, score: s.score }
-      );
-      const overall = Math.round(
-        scores.reduce((acc, s) => acc + s.score, 0) / scores.length
-      );
+    if (!isAbandoned && built.scores.length > 0) {
       try {
         const res = await fetch("/api/records", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ overall, scores }),
+          body: JSON.stringify({
+            overall: built.overall,
+            scores: built.scores.map((s) => ({ name: s.name, score: s.score })),
+          }),
         });
         if (!res.ok) console.warn("면접 기록 저장 실패:", res.status);
       } catch {
@@ -297,6 +515,7 @@ export default function App() {
       }
     }
     setAbandoned(isAbandoned);
+    window.history.pushState({ screen: "result" }, "");
     setScreen("result");
   };
 
@@ -332,7 +551,7 @@ export default function App() {
             videoRef={videoRef}
             question={questions[currentQ] || QUESTIONS[currentQ] || ""}
             questionIndex={currentQ}
-            totalQuestions={TARGET_QUESTIONS}
+            totalQuestions={targetQuestions}
             timer={fmt(timer)}
             feedbackOpen={feedbackOpen}
             onToggleFeedback={() => setFeedbackOpen((f) => !f)}
@@ -340,6 +559,8 @@ export default function App() {
             onAnswerChange={setAnswer}
             busy={busy}
             poseScore={poseScore}
+            exprScore={exprScore}
+            gazeScore={gazeScore}
             onNext={nextQuestion}
             onEnd={() => endInterview(true)}
           />
@@ -347,6 +568,7 @@ export default function App() {
         {screen === "result" && (
           <ResultScreen
             abandoned={abandoned}
+            result={result}
             showResults={showResults}
             onShowResults={() => setShowResults(true)}
             onRestart={() => {
@@ -385,6 +607,275 @@ export default function App() {
 }
 
 /* ─────────────────────────── HOME ─────────────────────────── */
+
+/* ───────── 랜딩 애니메이션 유틸 & 쇼케이스 섹션 ───────── */
+
+// 요소가 화면에 들어오면 inView=true (한 번만 트리거)
+function useInView<T extends HTMLElement>(threshold = 0.3) {
+  const ref = useRef<T | null>(null);
+  const [inView, setInView] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          setInView(true);
+          io.disconnect();
+        }
+      },
+      { threshold }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [threshold]);
+  return [ref, inView] as const;
+}
+
+// 0 → to 까지 부드럽게 카운트업 (run 이 true 가 되면 시작)
+function CountUp({ to, run, duration = 1100 }: { to: number; run: boolean; duration?: number }) {
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    if (!run) return;
+    let raf = 0;
+    const start = performance.now();
+    const step = (t: number) => {
+      const k = Math.min(1, (t - start) / duration);
+      const eased = 1 - Math.pow(1 - k, 3);
+      setN(Math.round(to * eased));
+      if (k < 1) raf = requestAnimationFrame(step);
+      else setN(to);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [run, to, duration]);
+  return <>{n}</>;
+}
+
+// 원형 점수 게이지
+function ScoreRing({ value, color, label, run }: { value: number; color: string; label: string; run: boolean }) {
+  const R = 50;
+  const C = 2 * Math.PI * R;
+  return (
+    <div className="relative w-[120px] h-[120px] text-center">
+      <svg width="120" height="120" className="-rotate-90">
+        <circle cx="60" cy="60" r={R} stroke="hsl(var(--border))" strokeWidth="10" fill="none" />
+        <circle
+          cx="60"
+          cy="60"
+          r={R}
+          stroke={color}
+          strokeWidth="10"
+          fill="none"
+          strokeLinecap="round"
+          strokeDasharray={C}
+          strokeDashoffset={run ? C * (1 - value / 100) : C}
+          style={{ transition: "stroke-dashoffset 1.3s cubic-bezier(.34,1.2,.64,1)" }}
+        />
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <span className="text-2xl font-bold text-[hsl(var(--primary))]">
+          <CountUp to={value} run={run} />
+        </span>
+        <span className="text-xs text-muted-foreground">{label}</span>
+      </div>
+    </div>
+  );
+}
+
+// 히어로 '실시간 분석 중' 패널 — 막대 채워짐 + 숫자 카운트업
+const HERO_BARS = [
+  { label: "시선 안정성", val: 74, color: "bg-[hsl(213,90%,60%)]" },
+  { label: "표정 자신감", val: 82, color: "bg-[hsl(222,47%,35%)]" },
+  { label: "자세 균형", val: 88, color: "bg-emerald-500" },
+  { label: "발화 명확성", val: 79, color: "bg-violet-500" },
+];
+
+function HeroPanel() {
+  const [ref, inView] = useInView<HTMLDivElement>(0.3);
+  return (
+    <div ref={ref} className="navy-card rounded-2xl p-6 shadow-xl relative overflow-hidden text-left">
+      <div className="absolute top-0 right-0 w-32 h-32 bg-[hsl(var(--accent))/0.05] rounded-full -translate-y-1/2 translate-x-1/2" />
+      <div className="flex items-center gap-3 mb-5">
+        <div className="w-8 h-8 navy-gradient rounded-lg flex items-center justify-center">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
+            <circle cx="12" cy="12" r="10" />
+            <path d="m9 12 2 2 4-4" />
+          </svg>
+        </div>
+        <div>
+          <p className="text-sm font-semibold text-[hsl(var(--primary))]">실시간 분석 중</p>
+          <p className="text-xs text-muted-foreground">4개 채널 동시 분석</p>
+        </div>
+        <div className="ml-auto flex items-center gap-1.5 text-xs text-red-500 font-semibold">
+          <span className="w-1.5 h-1.5 rounded-full bg-red-500 recording-dot" />
+          REC
+        </div>
+      </div>
+
+      <div className="space-y-3 mb-5">
+        {HERO_BARS.map((item, i) => (
+          <div key={item.label}>
+            <div className="flex justify-between mb-1">
+              <span className="text-xs text-muted-foreground">{item.label}</span>
+              <span className="text-xs font-bold text-[hsl(var(--primary))]">
+                <CountUp to={item.val} run={inView} />
+              </span>
+            </div>
+            <div className="h-1.5 bg-[hsl(var(--border))] rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full ${item.color}`}
+                style={{
+                  width: inView ? `${item.val}%` : "0%",
+                  transition: `width 1.1s cubic-bezier(.34,1.3,.64,1) ${i * 0.12}s`,
+                }}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="bg-[hsl(var(--secondary))] rounded-xl p-3.5 border border-[hsl(var(--border))]">
+        <p className="text-xs text-muted-foreground mb-1 font-medium">AI 꼬리 질문</p>
+        <p className="text-sm text-[hsl(var(--primary))] font-medium leading-snug">
+          "방금 말씀하신 프로젝트에서 팀원과의 의사소통은 어떻게 이루어졌나요?"
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ── 핵심 엔진 아래: 실시간 분석(링) 쇼케이스 ──
+const SHOWCASE_RINGS = [
+  { label: "표정", value: 82, color: "#16a34a" },
+  { label: "시선", value: 71, color: "#3b82f6" },
+  { label: "자세", value: 88, color: "#10b981" },
+  { label: "음성", value: 79, color: "#8b5cf6" },
+];
+
+function AnalysisShowcase() {
+  const [ref, inView] = useInView<HTMLDivElement>(0.35);
+  return (
+    <div className="bg-white py-16 px-8 border-t border-[hsl(var(--border))]">
+      <div className="max-w-4xl mx-auto text-center">
+        <p className="text-sm font-bold text-[hsl(var(--accent))] uppercase tracking-widest mb-3">실시간 분석</p>
+        <h2 className="text-3xl md:text-4xl font-bold text-[hsl(var(--primary))] mb-3">실시간으로 이렇게 분석됩니다</h2>
+        <p className="text-base text-muted-foreground max-w-xl mx-auto leading-relaxed text-balance mb-10">
+          면접 중 표정·시선·자세·음성이 0~100점으로 실시간 채점됩니다.
+        </p>
+        <div ref={ref} className="navy-card rounded-2xl p-8 flex flex-wrap items-center justify-center gap-8">
+          {SHOWCASE_RINGS.map((r) => (
+            <ScoreRing key={r.label} value={r.value} color={r.color} label={r.label} run={inView} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── 핵심 엔진 아래: 결과 리포트 쇼케이스 ──
+const SHOWCASE_CHANNELS: { name: string; score: number; color: string; subs: [string, number][] }[] = [
+  { name: "표정 분석", score: 82, color: "#1e3a6e", subs: [["미소", 100], ["긴장도", 64]] },
+  { name: "시선 추적", score: 71, color: "#3b82f6", subs: [["중심도", 70], ["안정성", 73]] },
+  { name: "자세 평가", score: 88, color: "#1e40af", subs: [["기울기", 100], ["흔들림", 70], ["제스처", 92]] },
+  { name: "음성 분석", score: 79, color: "#2563eb", subs: [["속도", 100], ["음량", 70], ["침묵", 100], ["명료도", 70]] },
+];
+const SHOWCASE_OVERALL = Math.round(
+  SHOWCASE_CHANNELS.reduce((a, c) => a + c.score, 0) / SHOWCASE_CHANNELS.length
+);
+
+function ResultShowcase() {
+  const [ref, inView] = useInView<HTMLDivElement>(0.3);
+  const [open, setOpen] = useState<number | null>(null);
+  return (
+    <div className="bg-[hsl(222,47%,97%)] py-16 px-8 border-t border-[hsl(var(--border))]">
+      <div className="max-w-4xl mx-auto">
+        <div className="text-center mb-10">
+          <p className="text-sm font-bold text-[hsl(var(--accent))] uppercase tracking-widest mb-3">결과 리포트</p>
+          <h2 className="text-3xl md:text-4xl font-bold text-[hsl(var(--primary))] mb-3">면접이 끝나면 이런 리포트를 받습니다</h2>
+          <p className="text-base text-muted-foreground max-w-xl mx-auto leading-relaxed text-balance">
+            종합 점수와 영역별 점수, 세부 지표, AI 피드백까지 한눈에 확인하세요.
+          </p>
+        </div>
+
+        <div ref={ref} className="navy-card rounded-2xl p-8 text-center mb-6">
+          <p className="text-muted-foreground text-sm mb-2">종합 점수</p>
+          <div className="text-6xl font-bold text-[hsl(var(--primary))] mb-3">
+            <CountUp to={SHOWCASE_OVERALL} run={inView} />
+          </div>
+          <div className="inline-flex items-center gap-1.5 bg-green-50 border border-green-200 px-3 py-1.5 rounded-full">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2.5">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+            <span className="text-green-700 text-sm font-semibold">우수한 성과입니다!</span>
+          </div>
+        </div>
+
+        <div className="grid md:grid-cols-2 gap-5">
+          <div className="navy-card rounded-2xl p-6">
+            <h3 className="font-bold text-[hsl(var(--primary))] mb-5">
+              영역별 점수 <span className="text-xs font-normal text-muted-foreground">(클릭해서 세부지표 보기)</span>
+            </h3>
+            <div className="flex flex-col gap-4">
+              {SHOWCASE_CHANNELS.map((c, i) => (
+                <div key={c.name} className="cursor-pointer" onClick={() => setOpen(open === i ? null : i)}>
+                  <div className="flex justify-between mb-1.5">
+                    <span className="text-sm font-medium text-foreground">{c.name}</span>
+                    <span className="text-sm font-bold text-[hsl(var(--primary))]">{c.score}점</span>
+                  </div>
+                  <div className="h-2.5 bg-[hsl(var(--border))] rounded-full overflow-hidden">
+                    <div
+                      className="h-full rounded-full"
+                      style={{
+                        width: inView ? `${c.score}%` : "0%",
+                        backgroundColor: c.color,
+                        transition: `width 1s cubic-bezier(.34,1.3,.64,1) ${i * 0.1}s`,
+                      }}
+                    />
+                  </div>
+                  <div className="overflow-hidden transition-all duration-300" style={{ maxHeight: open === i ? 160 : 0 }}>
+                    <div className="pt-2.5">
+                      {c.subs.map((s) => (
+                        <div key={s[0]} className="flex justify-between text-xs text-muted-foreground py-1">
+                          <span>{s[0]}</span>
+                          <b className="text-foreground">{s[1]}점</b>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="navy-card rounded-2xl p-6">
+            <h3 className="font-bold text-[hsl(var(--primary))] mb-4">AI 피드백 요약</h3>
+            <div className="flex flex-col gap-3">
+              {[
+                { type: "good", text: "카메라를 안정적으로 응시했습니다. 좋은 아이컨택입니다." },
+                { type: "good", text: "자연스럽고 안정적인 표정을 잘 유지했습니다." },
+                { type: "improve", text: "상체 흔들림이 조금 있습니다. 자세를 안정적으로 유지해보세요." },
+                { type: "improve", text: "말 속도가 약간 빠릅니다. 130~180 WPM을 목표로 해보세요." },
+              ].map((fb, i) => (
+                <div
+                  key={i}
+                  className={`rounded-xl p-3.5 text-sm leading-relaxed ${
+                    fb.type === "good"
+                      ? "bg-green-50 border border-green-200 text-green-800"
+                      : "bg-yellow-50 border border-yellow-200 text-yellow-800"
+                  }`}
+                >
+                  <span className="font-semibold mr-1.5">{fb.type === "good" ? "✓" : "!"}</span>
+                  {fb.text}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function HomeScreen({
   isLoggedIn,
@@ -441,14 +932,14 @@ function HomeScreen({
               <button
                 data-testid="button-logout"
                 onClick={onLogout}
-                className="px-3 py-1.5 text-white/60 text-sm hover:text-white transition-colors"
+                className="px-4 py-2.5 text-white/70 text-base font-medium hover:text-white transition-colors"
               >
                 로그아웃
               </button>
               <button
                 data-testid="button-delete-account"
                 onClick={onDeleteAccount}
-                className="px-3 py-1.5 text-white/40 text-sm hover:text-red-300 transition-colors"
+                className="px-4 py-2.5 text-white/50 text-base hover:text-red-300 transition-colors"
               >
                 회원 탈퇴
               </button>
@@ -458,14 +949,14 @@ function HomeScreen({
               <button
                 data-testid="button-login"
                 onClick={() => onAuth("login")}
-                className="px-4 py-2 text-white/90 text-sm font-medium rounded-lg hover:bg-white/10 transition-colors"
+                className="px-6 py-3 text-white/90 text-base font-medium rounded-xl hover:bg-white/10 transition-colors"
               >
                 로그인
               </button>
               <button
                 data-testid="button-signup"
                 onClick={() => onAuth("signup")}
-                className="px-4 py-2 bg-white text-[hsl(var(--primary))] text-sm font-semibold rounded-lg hover:bg-white/90 transition-colors shadow-sm"
+                className="px-6 py-3 bg-white text-[hsl(var(--primary))] text-base font-bold rounded-xl hover:bg-white/90 transition-colors shadow-sm"
               >
                 시작하기
               </button>
@@ -479,110 +970,52 @@ function HomeScreen({
         <div className="absolute top-0 right-0 w-[600px] h-[600px] rounded-full bg-[hsl(213,90%,60%)/0.06] blur-3xl -translate-y-1/2 translate-x-1/4 pointer-events-none" />
         <div className="absolute bottom-0 left-0 w-96 h-96 rounded-full bg-[hsl(222,47%,23%)/0.04] blur-3xl translate-y-1/2 -translate-x-1/4 pointer-events-none" />
 
-        <div className="relative max-w-6xl mx-auto px-8 py-20 grid md:grid-cols-2 gap-12 items-center">
-          {/* Left: Copy */}
-          <div>
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-[hsl(var(--accent))/0.1] border border-[hsl(var(--accent))/0.2] rounded-full mb-6">
-              <span className="w-1.5 h-1.5 rounded-full bg-[hsl(var(--accent))] recording-dot" />
-              <span className="text-xs font-semibold text-[hsl(var(--accent))]">
-                AI 멀티모달 면접 분석 플랫폼
-              </span>
-            </div>
-
-            <h1 className="text-4xl md:text-5xl font-bold text-[hsl(var(--primary))] leading-[1.15] tracking-tight mb-5">
-              실전과 동일한 환경에서<br />
-              <span className="text-[hsl(var(--accent))]">면접 역량</span>을 객관적으로<br />
-              측정하세요
-            </h1>
-
-            <p className="text-base text-muted-foreground leading-relaxed mb-8 max-w-lg">
-              시선, 표정, 자세, 음성까지 — AI가 면접관의 시각으로 분석합니다.
-              이력서 기반 맞춤 질문과 꼬리 질문으로 실전 대비를 완성하세요.
-            </p>
-
-            <div className="flex items-center gap-3 flex-wrap">
-              <button
-                data-testid="button-start"
-                onClick={onStart}
-                className="navy-gradient px-7 py-3.5 rounded-xl text-white font-bold text-sm shadow-lg hover:shadow-xl hover:scale-105 active:scale-100 transition-all duration-200 flex items-center gap-2"
-              >
-                면접 시작하기
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <path d="m9 18 6-6-6-6"/>
-                </svg>
-              </button>
-              {!isLoggedIn && (
-                <button
-                  onClick={() => onAuth("login")}
-                  className="px-5 py-3.5 text-sm font-medium text-[hsl(var(--primary))] border border-[hsl(var(--border))] rounded-xl hover:bg-[hsl(var(--secondary))] transition-colors"
-                >
-                  이미 계정이 있나요?
-                </button>
-              )}
-            </div>
-
-            <div className="mt-8 flex items-center gap-6">
-              {[
-                { label: "이력서 기반 맞춤 질문" },
-                { label: "꼬리 질문 자동 생성" },
-                { label: "면접 기록 저장" },
-              ].map((item) => (
-                <div key={item.label} className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="hsl(var(--accent))" strokeWidth="2.5">
-                    <polyline points="20 6 9 17 4 12"/>
-                  </svg>
-                  {item.label}
-                </div>
-              ))}
-            </div>
+        <div className="relative max-w-3xl mx-auto px-6 py-20 flex flex-col items-center text-center">
+          <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-[hsl(var(--accent))/0.1] border border-[hsl(var(--accent))/0.2] rounded-full mb-6">
+            <span className="w-1.5 h-1.5 rounded-full bg-[hsl(var(--accent))] recording-dot" />
+            <span className="text-xs font-semibold text-[hsl(var(--accent))]">
+              AI 멀티모달 면접 분석 플랫폼
+            </span>
           </div>
 
-          {/* Right: Feature preview panel */}
-          <div className="hidden md:block">
-            <div className="navy-card rounded-2xl p-6 shadow-xl relative overflow-hidden">
-              <div className="absolute top-0 right-0 w-32 h-32 bg-[hsl(var(--accent))/0.05] rounded-full -translate-y-1/2 translate-x-1/2" />
-              <div className="flex items-center gap-3 mb-5">
-                <div className="w-8 h-8 navy-gradient rounded-lg flex items-center justify-center">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
-                    <circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>
-                  </svg>
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-[hsl(var(--primary))]">실시간 분석 중</p>
-                  <p className="text-xs text-muted-foreground">4개 채널 동시 분석</p>
-                </div>
-                <div className="ml-auto flex items-center gap-1.5 text-xs text-red-500 font-semibold">
-                  <span className="w-1.5 h-1.5 rounded-full bg-red-500 recording-dot" />
-                  REC
-                </div>
-              </div>
+          <h1 className="text-4xl md:text-5xl font-bold text-[hsl(var(--primary))] leading-[1.25] tracking-tight mb-5 text-balance">
+            막연한 연습은 그만, 구체적인 피드백으로 <span className="text-[hsl(var(--accent))]">합격</span>에 가까워지세요
+          </h1>
 
-              <div className="space-y-3 mb-5">
-                {[
-                  { label: "시선 안정성", val: 74, color: "bg-[hsl(213,90%,60%)]" },
-                  { label: "표정 자신감", val: 82, color: "bg-[hsl(222,47%,35%)]" },
-                  { label: "자세 균형", val: 88, color: "bg-emerald-500" },
-                  { label: "발화 명확성", val: 79, color: "bg-violet-500" },
-                ].map((item) => (
-                  <div key={item.label}>
-                    <div className="flex justify-between mb-1">
-                      <span className="text-xs text-muted-foreground">{item.label}</span>
-                      <span className="text-xs font-bold text-[hsl(var(--primary))]">{item.val}</span>
-                    </div>
-                    <div className="h-1.5 bg-[hsl(var(--border))] rounded-full overflow-hidden">
-                      <div className={`h-full rounded-full ${item.color}`} style={{ width: `${item.val}%` }} />
-                    </div>
-                  </div>
-                ))}
-              </div>
+          <p className="text-base md:text-lg text-muted-foreground leading-relaxed mb-9 max-w-2xl text-balance">
+            내 자기소개서로 만든 맞춤 질문과 꼬리 질문으로 실전처럼 연습하고,{" "}
+            <span className="whitespace-nowrap">시선·표정·음성·자세</span> 분석 리포트까지 받아보세요.
+          </p>
 
-              <div className="bg-[hsl(var(--secondary))] rounded-xl p-3.5 border border-[hsl(var(--border))]">
-                <p className="text-xs text-muted-foreground mb-1 font-medium">AI 꼬리 질문</p>
-                <p className="text-sm text-[hsl(var(--primary))] font-medium leading-snug">
-                  "방금 말씀하신 프로젝트에서 팀원과의 의사소통은 어떻게 이루어졌나요?"
-                </p>
+          <button
+            data-testid="button-start"
+            onClick={onStart}
+            className="navy-gradient px-10 py-5 rounded-2xl text-white font-bold text-lg shadow-lg hover:shadow-xl hover:scale-105 active:scale-100 transition-all duration-200 inline-flex items-center gap-2.5"
+          >
+            면접 시작하기
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path d="m9 18 6-6-6-6"/>
+            </svg>
+          </button>
+
+          <div className="mt-8 flex items-center justify-center gap-6 flex-wrap">
+            {[
+              { label: "자기소개서 기반 맞춤 질문" },
+              { label: "꼬리 질문 자동 생성" },
+              { label: "면접 기록 저장" },
+            ].map((item) => (
+              <div key={item.label} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="hsl(var(--accent))" strokeWidth="2.5">
+                  <polyline points="20 6 9 17 4 12"/>
+                </svg>
+                {item.label}
               </div>
-            </div>
+            ))}
+          </div>
+
+          {/* 실시간 분석 패널 — '면접 시작하기' 버튼 아래, 가운데 정렬 */}
+          <div className="w-full max-w-2xl mt-14">
+            <HeroPanel />
           </div>
         </div>
       </div>
@@ -591,82 +1024,173 @@ function HomeScreen({
       <div className="bg-white py-16 px-8 border-t border-[hsl(var(--border))]">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-12">
-            <p className="text-xs font-semibold text-[hsl(var(--accent))] uppercase tracking-widest mb-3">핵심 기능</p>
-            <h2 className="text-2xl font-bold text-[hsl(var(--primary))]">
-              합격을 만드는 4가지 분석 엔진
+            <p className="text-sm font-bold text-[hsl(var(--accent))] uppercase tracking-widest mb-3">핵심 기능</p>
+            <h2 className="text-3xl md:text-4xl font-bold text-[hsl(var(--primary))] mb-3">
+              합격을 만드는 5가지 핵심 엔진
             </h2>
+            <p className="text-base text-muted-foreground max-w-xl mx-auto leading-relaxed text-balance">
+              <span className="whitespace-nowrap">시선·표정·음성·자세</span> 실시간 분석부터 자기소개서 맞춤 질문까지, AI가 함께합니다.
+            </p>
           </div>
 
-          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-5">
+          <div className="grid sm:grid-cols-2 gap-7 max-w-4xl mx-auto">
             {[
               {
-                icon: (
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                    <circle cx="12" cy="12" r="3"/>
+                // 시선 — 두 눈 + 시선이 카메라(타깃)를 향하는 일러스트
+                art: (
+                  <svg className="absolute inset-0 w-full h-full transition-transform duration-300 group-hover:scale-105" viewBox="0 0 400 200" preserveAspectRatio="xMidYMid slice">
+                    <defs>
+                      <linearGradient id="artGazeBg" x1="0" y1="0" x2="1" y2="1">
+                        <stop offset="0" stopColor="#16294d" /><stop offset="1" stopColor="#2a4a86" />
+                      </linearGradient>
+                    </defs>
+                    <rect width="400" height="200" fill="url(#artGazeBg)" />
+                    <g stroke="#ffffff" strokeOpacity="0.06"><path d="M0 50H400M0 100H400M0 150H400M100 0V200M200 0V200M300 0V200" /></g>
+                    <g transform="translate(140 112)">
+                      <path d="M-40 0Q0 -28 40 0Q0 28 -40 0Z" fill="#ffffff" fillOpacity="0.12" stroke="#9ec5ff" strokeWidth="2.5" />
+                      <circle r="14" fill="#3b82f6" /><circle r="6.5" fill="#0b1f3f" /><circle cx="5" cy="-4" r="3" fill="#ffffff" />
+                    </g>
+                    <g transform="translate(260 112)">
+                      <path d="M-40 0Q0 -28 40 0Q0 28 -40 0Z" fill="#ffffff" fillOpacity="0.12" stroke="#9ec5ff" strokeWidth="2.5" />
+                      <circle r="14" fill="#3b82f6" /><circle r="6.5" fill="#0b1f3f" /><circle cx="5" cy="-4" r="3" fill="#ffffff" />
+                    </g>
+                    <g stroke="#60a5fa" strokeWidth="1.5" strokeDasharray="5 5" strokeOpacity="0.8"><line x1="140" y1="112" x2="200" y2="48" /><line x1="260" y1="112" x2="200" y2="48" /></g>
+                    <g transform="translate(200 48)" stroke="#60a5fa" strokeWidth="2" fill="none">
+                      <circle r="13" strokeOpacity="0.9" /><line x1="-20" x2="-15" /><line x1="15" x2="20" /><line y1="-20" y2="-15" /><line y1="15" y2="20" />
+                      <circle r="3" fill="#60a5fa" stroke="none" />
+                    </g>
                   </svg>
                 ),
-                title: "시선 & 표정 분석",
-                desc: "눈동자 방향과 표정 변화를 프레임 단위로 추적해 긴장도와 자신감 지표를 산출합니다.",
-                tag: "CV 모델",
+                title: "시선 분석",
+                desc: "시선이 카메라를 안정적으로 향하는지, 한쪽으로 쏠리거나 흔들리지는 않는지 실시간으로 분석해 아이컨택을 평가합니다.",
               },
               {
-                icon: (
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
-                    <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-                    <line x1="12" y1="19" x2="12" y2="23"/>
-                    <line x1="8" y1="23" x2="16" y2="23"/>
+                // 표정 — 미소 짓는 얼굴 + 표정 포인트 일러스트
+                art: (
+                  <svg className="absolute inset-0 w-full h-full transition-transform duration-300 group-hover:scale-105" viewBox="0 0 400 200" preserveAspectRatio="xMidYMid slice">
+                    <defs>
+                      <linearGradient id="artExprBg" x1="0" y1="0" x2="1" y2="1">
+                        <stop offset="0" stopColor="#15294d" /><stop offset="1" stopColor="#2b4f93" />
+                      </linearGradient>
+                    </defs>
+                    <rect width="400" height="200" fill="url(#artExprBg)" />
+                    <g stroke="#ffffff" strokeOpacity="0.06"><path d="M0 50H400M0 100H400M0 150H400M100 0V200M200 0V200M300 0V200" /></g>
+                    <g transform="translate(200 100)">
+                      <circle r="62" fill="#ffffff" fillOpacity="0.08" stroke="#9ec5ff" strokeOpacity="0.6" strokeWidth="2" />
+                      <path d="M-36 -22q12 -8 26 -2" fill="none" stroke="#9ec5ff" strokeWidth="3" strokeLinecap="round" />
+                      <path d="M10 -24q14 -6 26 2" fill="none" stroke="#9ec5ff" strokeWidth="3" strokeLinecap="round" />
+                      <circle cx="-22" cy="-6" r="5" fill="#3b82f6" /><circle cx="22" cy="-6" r="5" fill="#3b82f6" />
+                      <circle cx="-40" cy="16" r="7" fill="#f9a8d4" fillOpacity="0.5" /><circle cx="40" cy="16" r="7" fill="#f9a8d4" fillOpacity="0.5" />
+                      <path d="M-28 22Q0 48 28 22" fill="none" stroke="#60a5fa" strokeWidth="4" strokeLinecap="round" />
+                      <g fill="#60a5fa"><circle cx="-28" cy="22" r="2.5" /><circle cx="0" cy="36" r="2.5" /><circle cx="28" cy="22" r="2.5" /></g>
+                    </g>
+                    <path d="M330 48l4 11l11 4l-11 4l-4 11l-4 -11l-11 -4l11 -4z" fill="#fcd34d" />
                   </svg>
                 ),
-                title: "음성 & 발화 분석",
-                desc: "말 속도, 억양, 휴지(pause) 패턴을 분석해 발음 명확성과 논리적 전달력을 평가합니다.",
-                tag: "STT 엔진",
+                title: "표정 분석",
+                desc: "미소와 표정 변화를 분석해 너무 굳어 있거나 긴장한 인상은 아닌지 확인하고, 자연스럽고 자신감 있는 표정을 코칭합니다.",
               },
               {
-                icon: (
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
-                    <circle cx="9" cy="7" r="4"/>
-                    <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
-                    <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                // 음성 — 마이크 + 음파 + 파형 일러스트
+                art: (
+                  <svg className="absolute inset-0 w-full h-full transition-transform duration-300 group-hover:scale-105" viewBox="0 0 400 200" preserveAspectRatio="xMidYMid slice">
+                    <defs>
+                      <linearGradient id="artVoiceBg" x1="0" y1="0" x2="1" y2="1">
+                        <stop offset="0" stopColor="#15294d" /><stop offset="1" stopColor="#1d63b0" />
+                      </linearGradient>
+                    </defs>
+                    <rect width="400" height="200" fill="url(#artVoiceBg)" />
+                    <g fill="none" stroke="#9ec5ff" strokeOpacity="0.22" strokeWidth="2"><circle cx="200" cy="86" r="46" /><circle cx="200" cy="86" r="70" /><circle cx="200" cy="86" r="94" /></g>
+                    <g transform="translate(200 86)">
+                      <rect x="-16" y="-40" width="32" height="56" rx="16" fill="#ffffff" fillOpacity="0.92" />
+                      <path d="M-26 2a26 26 0 0 0 52 0" fill="none" stroke="#9ec5ff" strokeWidth="4" strokeLinecap="round" />
+                      <line x1="0" y1="28" x2="0" y2="40" stroke="#9ec5ff" strokeWidth="4" strokeLinecap="round" /><line x1="-12" y1="40" x2="12" y2="40" stroke="#9ec5ff" strokeWidth="4" strokeLinecap="round" />
+                    </g>
+                    <g fill="#60a5fa">
+                      {Array.from({ length: 27 }).map((_, i) => {
+                        const h = 8 + Math.abs(Math.sin(i * 0.8) * 28);
+                        return <rect key={i} x={16 + i * 13.7} y={172 - h / 2} width="6" height={h} rx="3" fillOpacity={0.85} />;
+                      })}
+                    </g>
                   </svg>
                 ),
-                title: "자세 & 제스처 분석",
-                desc: "상체 기울기, 어깨 위치, 손동작 빈도를 인식해 안정적인 면접 태도를 코칭합니다.",
-                tag: "Pose 추정",
+                title: "음성 분석",
+                desc: "말하는 속도와 목소리 크기, 말 사이의 멈춤을 분석해 또렷하고 안정적인 전달력을 평가합니다.",
               },
               {
-                icon: (
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                    <polyline points="14 2 14 8 20 8"/>
-                    <line x1="16" y1="13" x2="8" y2="13"/>
-                    <line x1="16" y1="17" x2="8" y2="17"/>
-                    <polyline points="10 9 9 9 8 9"/>
+                // 자세 — 포즈 스켈레톤 관절 일러스트
+                art: (
+                  <svg className="absolute inset-0 w-full h-full transition-transform duration-300 group-hover:scale-105" viewBox="0 0 400 200" preserveAspectRatio="xMidYMid slice">
+                    <defs>
+                      <linearGradient id="artPoseBg" x1="0" y1="0" x2="1" y2="1">
+                        <stop offset="0" stopColor="#16294d" /><stop offset="1" stopColor="#234a86" />
+                      </linearGradient>
+                    </defs>
+                    <rect width="400" height="200" fill="url(#artPoseBg)" />
+                    <g stroke="#ffffff" strokeOpacity="0.06"><path d="M0 40H400M0 80H400M0 120H400M0 160H400M80 0V200M160 0V200M240 0V200M320 0V200" /></g>
+                    <g transform="translate(200 20)" stroke="#60a5fa" strokeWidth="3" strokeLinecap="round" fill="none">
+                      <line x1="-48" y1="44" x2="48" y2="44" /><line x1="0" y1="44" x2="0" y2="104" />
+                      <line x1="-48" y1="44" x2="-72" y2="92" /><line x1="-72" y1="92" x2="-60" y2="140" />
+                      <line x1="48" y1="44" x2="72" y2="92" /><line x1="72" y1="92" x2="60" y2="140" />
+                      <line x1="-28" y1="104" x2="28" y2="104" />
+                    </g>
+                    <g transform="translate(200 20)">
+                      <circle cx="0" cy="20" r="16" fill="#ffffff" fillOpacity="0.92" />
+                      <g fill="#9ec5ff"><circle cx="-48" cy="44" r="5" /><circle cx="48" cy="44" r="5" /><circle cx="-72" cy="92" r="5" /><circle cx="72" cy="92" r="5" /><circle cx="-60" cy="140" r="5" /><circle cx="60" cy="140" r="5" /><circle cx="0" cy="44" r="5" /><circle cx="-28" cy="104" r="5" /><circle cx="28" cy="104" r="5" /></g>
+                    </g>
+                    <path d="M150 56a18 18 0 0 1 16-10" fill="none" stroke="#34d399" strokeWidth="2.5" />
                   </svg>
                 ),
-                title: "이력서 기반 질문 생성",
-                desc: "업로드한 이력서와 JD를 분석해 직무·경력에 최적화된 면접 질문을 자동으로 생성합니다.",
-                tag: "LLM 기반",
+                title: "자세 분석",
+                desc: "상체 기울기와 어깨 균형, 손동작 빈도를 인식해 흔들림 없이 안정적인 면접 자세를 잡아 줍니다.",
               },
             ].map((f) => (
-              <div key={f.title} className="navy-card rounded-2xl p-5 hover:shadow-lg transition-shadow group">
-                <div className="w-10 h-10 navy-gradient rounded-xl flex items-center justify-center text-white mb-4 group-hover:scale-110 transition-transform">
-                  {f.icon}
+              <div key={f.title} className="navy-card rounded-2xl overflow-hidden border-2 border-transparent hover:border-[hsl(var(--accent))/0.35] hover:shadow-xl hover:-translate-y-1.5 transition-all duration-200 group">
+                <div className="relative aspect-[2/1] overflow-hidden">{f.art}</div>
+                <div className="p-7">
+                  <h3 className="font-bold text-[hsl(var(--primary))] mb-2.5 text-xl">{f.title}</h3>
+                  <p className="text-sm text-muted-foreground leading-relaxed text-balance">{f.desc}</p>
                 </div>
-                <div className="inline-flex mb-2">
-                  <span className="text-[10px] font-semibold text-[hsl(var(--accent))] bg-[hsl(var(--accent))/0.1] px-2 py-0.5 rounded-full">
-                    {f.tag}
-                  </span>
-                </div>
-                <h3 className="font-semibold text-[hsl(var(--primary))] mb-2 text-sm">{f.title}</h3>
-                <p className="text-xs text-muted-foreground leading-relaxed">{f.desc}</p>
               </div>
             ))}
+
+            {/* 자기소개서 맞춤 질문 — 가운데 정렬된 강조 카드 */}
+            <div className="navy-card rounded-2xl overflow-hidden border-2 border-transparent hover:border-[hsl(var(--accent))/0.35] hover:shadow-xl hover:-translate-y-1.5 transition-all duration-200 group w-full sm:col-span-2 sm:max-w-md sm:mx-auto">
+              <div className="relative aspect-[2/1] overflow-hidden">
+                <svg className="absolute inset-0 w-full h-full transition-transform duration-300 group-hover:scale-105" viewBox="0 0 400 200" preserveAspectRatio="xMidYMid slice">
+                  <defs>
+                    <linearGradient id="artCoverBg" x1="0" y1="0" x2="1" y2="1">
+                      <stop offset="0" stopColor="#15294d" /><stop offset="1" stopColor="#2b4f93" />
+                    </linearGradient>
+                  </defs>
+                  <rect width="400" height="200" fill="url(#artCoverBg)" />
+                  <g transform="translate(96 26)">
+                    <rect width="124" height="152" rx="10" fill="#ffffff" fillOpacity="0.95" />
+                    <rect x="18" y="20" width="60" height="10" rx="5" fill="#1e3a6e" />
+                    <g fill="#9aa7bd"><rect x="18" y="44" width="88" height="7" rx="3.5" /><rect x="18" y="60" width="88" height="7" rx="3.5" /><rect x="18" y="76" width="64" height="7" rx="3.5" /><rect x="18" y="100" width="88" height="7" rx="3.5" /><rect x="18" y="116" width="88" height="7" rx="3.5" /><rect x="18" y="132" width="56" height="7" rx="3.5" /></g>
+                  </g>
+                  <g transform="translate(228 86)">
+                    <rect width="98" height="72" rx="16" fill="#3b82f6" />
+                    <path d="M26 72l0 24l26 -24z" fill="#3b82f6" />
+                    <text x="49" y="50" textAnchor="middle" fontSize="46" fontWeight="700" fill="#ffffff" fontFamily="sans-serif">?</text>
+                  </g>
+                  <path d="M318 36l5 13l13 5l-13 5l-5 13l-5 -13l-13 -5l13 -5z" fill="#fcd34d" />
+                </svg>
+              </div>
+              <div className="p-7">
+                <h3 className="font-bold text-[hsl(var(--primary))] mb-2.5 text-xl">자기소개서 맞춤 질문</h3>
+                <p className="text-sm text-muted-foreground leading-relaxed text-balance">
+                  면접을 시작하면 먼저 자기소개서를 작성합니다. AI가 그 내용을 분석해 나에게 꼭 맞는 첫 질문을 만들고, 내 답변에 따라 꼬리 질문을 이어서 던집니다.
+                </p>
+              </div>
+            </div>
           </div>
         </div>
       </div>
+
+      {/* 핵심 엔진 아래: 실시간 분석(링) + 결과 리포트 쇼케이스 */}
+      <AnalysisShowcase />
+      <ResultShowcase />
 
       {/* How it works */}
       <div className="navy-gradient py-16 px-8">
@@ -678,7 +1202,7 @@ function HomeScreen({
           <div className="grid md:grid-cols-3 gap-6 relative">
             <div className="hidden md:block absolute top-8 left-[calc(33%-16px)] right-[calc(33%-16px)] h-px bg-white/20" />
             {[
-              { step: "01", title: "이력서 업로드 & 직무 설정", desc: "이력서와 지원 직무를 등록하면 AI가 맞춤형 예상 질문 세트를 구성합니다." },
+              { step: "01", title: "자기소개서 작성", desc: "성장과정·지원동기·장단점·입사 후 포부를 작성하면 AI가 내용을 분석해 맞춤 질문을 준비합니다." },
               { step: "02", title: "AI 모의면접 진행", desc: "실전과 동일한 환경에서 면접을 진행합니다. AI가 답변을 바탕으로 꼬리 질문을 생성합니다." },
               { step: "03", title: "멀티모달 성과 리포트", desc: "시선·표정·음성·자세를 종합한 리포트와 개선 가이드를 즉시 제공합니다." },
             ].map((s) => (
@@ -706,7 +1230,7 @@ function PrepScreen({
 }: {
   videoRef: React.RefObject<HTMLVideoElement | null>;
   onBack: () => void;
-  onStart: (sections: CoverSections) => void | Promise<void>;
+  onStart: (sections: CoverSections, topic: string, count: number) => void | Promise<void>;
 }) {
   const [camReady, setCamReady] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
@@ -714,11 +1238,22 @@ function PrepScreen({
   const [sections, setSections] = useState<CoverSections>({});
   const [submitting, setSubmitting] = useState(false);
 
+  // 직무·경력 설정 — 선택 사항. 비워 두면 일반 면접("면접")으로 진행된다.
+  const [roleSelect, setRoleSelect] = useState(""); // 드롭다운 선택값("" | 직무명 | JOB_CUSTOM)
+  const [roleCustom, setRoleCustom] = useState(""); // "기타" 선택 시 직접 입력값
+  const [career, setCareer] = useState<"junior" | "senior">("junior");
+  const [years, setYears] = useState(""); // 경력 연차(경력 선택 시)
+  const [questionCount, setQuestionCount] = useState<number>(DEFAULT_QUESTION_COUNT); // 이번 면접 질문 개수
+
+  // 실제 직무명: "기타"면 직접 입력값, 아니면 드롭다운 값
+  const jobRole = roleSelect === JOB_CUSTOM ? roleCustom : roleSelect;
+
   const allChecked = checked.every(Boolean);
 
   const handleStart = async () => {
     setSubmitting(true);
-    await onStart(sections);
+    const topic = buildTopic(jobRole, career, years);
+    await onStart(sections, topic, questionCount);
     // 성공 시 부모가 화면을 전환하므로 이 컴포넌트는 언마운트된다.
     setSubmitting(false);
   };
@@ -752,8 +1287,122 @@ function PrepScreen({
 
       <div className="flex-1 max-w-4xl mx-auto w-full px-6 py-10">
         <div className="text-center mb-8">
-          <h2 className="text-2xl font-bold text-[hsl(var(--primary))] mb-2">자기소개서 작성 & 장치 확인</h2>
-          <p className="text-muted-foreground">자기소개서를 작성하면 AI가 맞춤 질문을 만듭니다. 장치도 함께 확인해 주세요.</p>
+          <h2 className="text-2xl font-bold text-[hsl(var(--primary))] mb-2">직무 설정 & 자기소개서 작성</h2>
+          <p className="text-muted-foreground">지원 직무와 자기소개서를 입력하면 AI가 더 날카로운 맞춤 질문을 만듭니다. 장치도 함께 확인해 주세요.</p>
+        </div>
+
+        {/* 직무·경력 설정 — 면접관이 먼저 알아야 할 정보라 자기소개서보다 위에 둔다.
+            선택 사항이며, 비워 두면 일반 면접으로 진행된다. */}
+        <div className="navy-card rounded-2xl p-6 mb-8 text-left">
+          <div className="flex items-baseline justify-between mb-1">
+            <h3 className="font-bold text-[hsl(var(--primary))]">직무 / 지원 포지션</h3>
+            <span className="text-xs text-muted-foreground">선택 사항</span>
+          </div>
+          <p className="text-muted-foreground text-sm mb-4">
+            지원 직무와 경력 수준을 설정하면 그 직무에 맞는 전문 질문이 생성됩니다. (설정하지 않으면 일반 면접으로 진행됩니다)
+          </p>
+          <div className="grid md:grid-cols-2 gap-4">
+            {/* 직무 드롭다운 (+ 기타 직접 입력) */}
+            <div>
+              <label className="font-semibold text-sm text-foreground block mb-1.5">직무</label>
+              <select
+                data-testid="select-job-role"
+                value={roleSelect}
+                onChange={(e) => setRoleSelect(e.target.value)}
+                className="w-full rounded-xl border border-[hsl(var(--border))] bg-background p-3 text-sm focus:outline-none focus:border-[hsl(var(--primary))]"
+              >
+                <option value="">직무를 선택하세요 (선택)</option>
+                {JOB_ROLE_GROUPS.map((group) => (
+                  <optgroup key={group.label} label={group.label}>
+                    {group.roles.map((r) => (
+                      <option key={r} value={r}>
+                        {r}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+                <option value={JOB_CUSTOM}>기타 (직접 입력)</option>
+              </select>
+              {roleSelect === JOB_CUSTOM && (
+                <input
+                  data-testid="input-job-custom"
+                  type="text"
+                  value={roleCustom}
+                  onChange={(e) => setRoleCustom(e.target.value.slice(0, 40))}
+                  maxLength={40}
+                  placeholder="예: AI 리서치 엔지니어"
+                  className="mt-2 w-full rounded-xl border border-[hsl(var(--border))] bg-background p-3 text-sm focus:outline-none focus:border-[hsl(var(--primary))]"
+                />
+              )}
+            </div>
+
+            {/* 경력 수준: 신입 / 경력(연차) */}
+            <div>
+              <label className="font-semibold text-sm text-foreground block mb-1.5">경력 수준</label>
+              <div className="flex items-center gap-4 h-[46px]">
+                <label className="flex items-center gap-1.5 text-sm cursor-pointer">
+                  <input
+                    type="radio"
+                    name="career"
+                    data-testid="radio-career-junior"
+                    checked={career === "junior"}
+                    onChange={() => setCareer("junior")}
+                    className="accent-[hsl(var(--primary))]"
+                  />
+                  신입
+                </label>
+                <label className="flex items-center gap-1.5 text-sm cursor-pointer">
+                  <input
+                    type="radio"
+                    name="career"
+                    data-testid="radio-career-senior"
+                    checked={career === "senior"}
+                    onChange={() => setCareer("senior")}
+                    className="accent-[hsl(var(--primary))]"
+                  />
+                  경력
+                </label>
+                {career === "senior" && (
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="number"
+                      data-testid="input-years"
+                      value={years}
+                      onChange={(e) => setYears(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))}
+                      min={0}
+                      max={50}
+                      placeholder="연차"
+                      className="w-20 rounded-xl border border-[hsl(var(--border))] bg-background p-2.5 text-sm focus:outline-none focus:border-[hsl(var(--primary))]"
+                    />
+                    <span className="text-sm text-muted-foreground">년</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* 질문 개수 — 이번 면접에서 진행할 질문 수 */}
+          <div className="mt-5 pt-5 border-t border-[hsl(var(--border))]">
+            <label className="font-semibold text-sm text-foreground block mb-2">질문 개수</label>
+            <div className="flex items-center gap-2">
+              {QUESTION_COUNT_OPTIONS.map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  data-testid={`button-qcount-${n}`}
+                  onClick={() => setQuestionCount(n)}
+                  className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
+                    questionCount === n
+                      ? "navy-gradient text-white shadow"
+                      : "bg-background border border-[hsl(var(--border))] text-foreground hover:border-[hsl(var(--primary))]"
+                  }`}
+                >
+                  {n}개
+                </button>
+              ))}
+              <span className="ml-1 text-xs text-muted-foreground">질문이 많을수록 면접이 길어집니다.</span>
+            </div>
+          </div>
         </div>
 
         {/* 자기소개서 문항 작성 — 입력 내용을 AI가 분석해 맞춤 질문을 생성한다 */}
@@ -798,13 +1447,15 @@ function PrepScreen({
           <div className="md:col-span-3">
             <div className="navy-card rounded-2xl overflow-hidden shadow-lg">
               <div className="relative aspect-video webcam-placeholder">
+                {/* -scale-x-100: 화면 표시만 좌우반전(셀피 미러). 분석 좌표는
+                    poseAnalyzer/faceAnalyzer 에서 별도로 보정하므로 영향 없음. */}
                 <video
                   ref={videoRef}
                   autoPlay
                   muted
                   playsInline
                   onPlay={() => setCamReady(true)}
-                  className="absolute inset-0 w-full h-full object-cover"
+                  className="absolute inset-0 w-full h-full object-cover -scale-x-100"
                 />
                 {!camReady && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center text-white/60">
@@ -954,6 +1605,29 @@ function PrepScreen({
 
 /* ─────────────────────────── INTERVIEW ─────────────────────────── */
 
+// 브라우저 기본 TTS (폴백). OpenAI TTS 실패 시에만 사용.
+function speakKoBrowser(text: string, onStart: () => void, onEnd: () => void) {
+  const synth = window.speechSynthesis;
+  if (!synth || !text) {
+    onEnd();
+    return;
+  }
+  try {
+    synth.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = "ko-KR";
+    const ko = synth.getVoices().find((v) => (v.lang || "").toLowerCase().startsWith("ko"));
+    if (ko) u.voice = ko;
+    u.rate = 1.0;
+    u.onstart = onStart;
+    u.onend = onEnd;
+    u.onerror = onEnd;
+    synth.speak(u);
+  } catch {
+    onEnd();
+  }
+}
+
 function InterviewScreen({
   videoRef,
   question,
@@ -966,6 +1640,8 @@ function InterviewScreen({
   onAnswerChange,
   busy,
   poseScore,
+  exprScore,
+  gazeScore,
   onNext,
   onEnd,
 }: {
@@ -980,10 +1656,94 @@ function InterviewScreen({
   onAnswerChange: (v: string) => void;
   busy: boolean;
   poseScore: number | null;
+  exprScore: number | null;
+  gazeScore: number | null;
   onNext: () => void;
   onEnd: () => void;
 }) {
   const isLast = questionIndex === totalQuestions - 1;
+
+  // AI 면접관이 질문을 음성으로 읽어준다.
+  // 1순위: OpenAI TTS(/api/tts, 자연스러운 한국어) → 실패 시 브라우저 기본 TTS 폴백.
+  const [speaking, setSpeaking] = useState(false);
+  const [muted, setMuted] = useState(false);
+  // /interviewer.jpg(한국인 면접관 사진)가 있으면 사진을, 없으면 심볼 아바타로 폴백.
+  const [imgOk, setImgOk] = useState(true);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const stopSpeaking = useCallback(() => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+    window.speechSynthesis?.cancel();
+    setSpeaking(false);
+  }, []);
+
+  const playQuestion = useCallback(
+    async (text: string) => {
+      stopSpeaking();
+      try {
+        const res = await fetch("/api/tts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text }),
+        });
+        if (res.ok) {
+          const url = URL.createObjectURL(await res.blob());
+          const audio = new Audio(url);
+          audioRef.current = audio;
+          audio.onplay = () => setSpeaking(true);
+          const done = () => {
+            setSpeaking(false);
+            URL.revokeObjectURL(url);
+            if (audioRef.current === audio) audioRef.current = null;
+          };
+          audio.onended = done;
+          audio.onerror = done;
+          await audio.play();
+          return;
+        }
+      } catch {
+        /* 서버/네트워크 오류 → 아래 브라우저 TTS 폴백 */
+      }
+      speakKoBrowser(text, () => setSpeaking(true), () => setSpeaking(false));
+    },
+    [stopSpeaking]
+  );
+
+  useEffect(() => {
+    if (busy || muted || !question) return;
+    playQuestion(question);
+    return () => stopSpeaking();
+  }, [question, busy, muted, playQuestion, stopSpeaking]);
+
+  const replayQuestion = () => {
+    if (!muted && question) playQuestion(question);
+  };
+
+  // 실시간 점수에서 간단한 피드백 항목을 만든다(고정 문구 대신 실제 신호 기반).
+  const liveFeedback: { type: "good" | "warn" | "tip"; text: string }[] = [];
+  if (gazeScore != null)
+    liveFeedback.push(
+      gazeScore >= 75
+        ? { type: "good", text: "카메라를 잘 응시하고 있습니다." }
+        : { type: "warn", text: "시선이 카메라에서 벗어나고 있습니다." }
+    );
+  if (exprScore != null)
+    liveFeedback.push(
+      exprScore >= 80
+        ? { type: "good", text: "자연스러운 표정을 유지하고 있습니다." }
+        : { type: "tip", text: "표정을 조금 더 편안하게 가져가 보세요." }
+    );
+  if (poseScore != null)
+    liveFeedback.push(
+      poseScore >= 75
+        ? { type: "good", text: "안정적인 자세를 유지하고 있습니다." }
+        : { type: "tip", text: "상체를 중앙에 두고 자세를 안정적으로 유지해 보세요." }
+    );
+  if (liveFeedback.length === 0)
+    liveFeedback.push({ type: "tip", text: "분석을 준비하고 있습니다. 잠시만 기다려 주세요." });
 
   return (
     <div className="min-h-screen flex flex-col bg-[hsl(222,47%,8%)] screen-enter">
@@ -1028,7 +1788,7 @@ function InterviewScreen({
           실시간 피드백
           {feedbackOpen && (
             <span className="w-4 h-4 rounded-full bg-white/20 text-[10px] flex items-center justify-center">
-              3
+              {liveFeedback.length}
             </span>
           )}
         </button>
@@ -1038,7 +1798,7 @@ function InterviewScreen({
       <div className="flex-1 flex gap-0 overflow-hidden">
         {/* Left 70% */}
         <div className="flex-[7] flex flex-col p-6 gap-5">
-          <div className="flex-1 rounded-2xl border border-white/10 bg-[hsl(222,47%,12%)] overflow-hidden relative flex flex-col items-center justify-center gap-5 shadow-xl">
+          <div className="flex-[5] min-h-0 rounded-2xl border border-white/10 bg-[hsl(222,47%,12%)] overflow-hidden relative flex flex-col items-center justify-center gap-5 shadow-xl">
             <div
               className="absolute inset-0 opacity-5"
               style={{
@@ -1049,35 +1809,85 @@ function InterviewScreen({
             />
             <div className="relative z-10 flex flex-col items-center gap-4">
               <div className="relative">
-                <div className="absolute inset-0 rounded-full bg-[hsl(var(--accent))/0.3] pulse-ring scale-125" />
-                <div className="w-28 h-28 rounded-full navy-gradient flex items-center justify-center shadow-2xl border-4 border-white/10">
-                  <svg width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.5">
-                    <path d="M12 2a5 5 0 1 0 5 5 5 5 0 0 0-5-5z"/>
-                    <path d="M20.84 14a8 8 0 0 1-15.68 0"/>
-                    <line x1="12" y1="22" x2="12" y2="18"/>
-                  </svg>
+                {/* 말하는 동안 글로우가 강해진다 */}
+                <div
+                  className={`absolute inset-0 rounded-full bg-[hsl(var(--accent))/0.3] pulse-ring scale-125 transition-opacity ${
+                    speaking ? "opacity-100" : "opacity-25"
+                  }`}
+                />
+                {speaking && (
+                  <div className="absolute -inset-4 rounded-full bg-[hsl(var(--accent))/0.25] blur-2xl animate-pulse" />
+                )}
+                <div
+                  className={`relative w-28 h-28 rounded-full overflow-hidden flex items-center justify-center shadow-2xl border-4 transition-all duration-300 ${
+                    imgOk ? "" : "navy-gradient"
+                  } ${speaking ? "border-[hsl(var(--accent))/0.5] scale-105" : "border-white/10"}`}
+                >
+                  {imgOk ? (
+                    <img
+                      src="/interviewer.jpg"
+                      alt="AI 면접관"
+                      className="w-full h-full object-cover"
+                      onError={() => setImgOk(false)}
+                    />
+                  ) : (
+                    <svg width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.5">
+                      <path d="M12 2a5 5 0 1 0 5 5 5 5 0 0 0-5-5z" />
+                      <path d="M20.84 14a8 8 0 0 1-15.68 0" />
+                      <line x1="12" y1="22" x2="12" y2="18" />
+                    </svg>
+                  )}
                 </div>
               </div>
               <div className="text-center">
                 <p className="text-white font-semibold text-lg">AI 면접관</p>
                 <p className="text-white/50 text-sm">Kim AI · 인사담당 매니저</p>
+                <div className="flex items-center justify-center gap-2 mt-2.5">
+                  <button
+                    onClick={replayQuestion}
+                    disabled={muted}
+                    className="px-3 py-1.5 rounded-lg bg-white/10 text-white/80 text-xs font-medium hover:bg-white/15 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    🔊 질문 다시 듣기
+                  </button>
+                  <button
+                    onClick={() => setMuted((m) => !m)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                      muted ? "bg-red-500/20 text-red-300" : "bg-white/10 text-white/60 hover:bg-white/15"
+                    }`}
+                  >
+                    {muted ? "음소거 해제" : "음소거"}
+                  </button>
+                </div>
+                {speaking && (
+                  <p className="text-[hsl(var(--accent))] text-xs mt-2 flex items-center justify-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[hsl(var(--accent))] recording-dot" />
+                    질문하는 중…
+                  </p>
+                )}
               </div>
             </div>
             <div className="z-10 flex items-center gap-1 h-10">
               {Array.from({ length: 24 }).map((_, i) => (
                 <div
                   key={i}
-                  className="w-1 rounded-full bg-[hsl(var(--accent))/0.5]"
+                  className={`w-1 rounded-full transition-colors ${
+                    speaking ? "bg-[hsl(var(--accent))]" : "bg-[hsl(var(--accent))/0.35]"
+                  }`}
                   style={{
-                    height: `${20 + Math.sin(i * 0.6) * 15}px`,
-                    animation: `recordingBlink ${0.8 + (i % 3) * 0.2}s ease-in-out ${i * 0.05}s infinite`,
+                    height: speaking
+                      ? `${14 + Math.abs(Math.sin(i * 0.6)) * 22}px`
+                      : `${8 + Math.abs(Math.sin(i * 0.6)) * 6}px`,
+                    animation: speaking
+                      ? `recordingBlink ${0.6 + (i % 3) * 0.15}s ease-in-out ${i * 0.04}s infinite`
+                      : "none",
                   }}
                 />
               ))}
             </div>
           </div>
 
-          <div className="rounded-2xl border border-white/10 bg-[hsl(222,47%,15%)] p-6 shadow-lg">
+          <div className="flex-[3] min-h-0 overflow-auto rounded-2xl border border-white/10 bg-[hsl(222,47%,15%)] p-6 shadow-lg">
             <div className="flex items-center gap-2 mb-3">
               <div className="w-6 h-6 rounded-lg bg-[hsl(var(--accent))] flex items-center justify-center">
                 <span className="text-white text-xs font-bold">Q</span>
@@ -1090,7 +1900,7 @@ function InterviewScreen({
           </div>
 
           {/* 답변 메모 — 입력하면 AI 꼬리질문에 반영된다 */}
-          <div className="rounded-2xl border border-white/10 bg-[hsl(222,47%,15%)] p-4 shadow-lg">
+          <div className="flex-[3] min-h-0 flex flex-col rounded-2xl border border-white/10 bg-[hsl(222,47%,15%)] p-4 shadow-lg">
             <label className="text-white/60 text-sm mb-2 block">
               내 답변 메모{" "}
               <span className="text-white/30">(입력하면 다음 질문에 반영됩니다)</span>
@@ -1098,9 +1908,8 @@ function InterviewScreen({
             <textarea
               value={answer}
               onChange={(e) => onAnswerChange(e.target.value)}
-              rows={3}
               placeholder="답변 요지를 적어 주세요. AI가 이어서 더 깊은 질문을 만듭니다."
-              className="w-full bg-[hsl(222,47%,10%)] border border-white/10 rounded-xl p-3 text-white text-sm resize-none focus:outline-none focus:border-[hsl(var(--accent))]"
+              className="flex-1 min-h-0 w-full bg-[hsl(222,47%,10%)] border border-white/10 rounded-xl p-3 text-white text-sm resize-none focus:outline-none focus:border-[hsl(var(--accent))]"
             />
           </div>
         </div>
@@ -1112,15 +1921,16 @@ function InterviewScreen({
             style={{ aspectRatio: "4/3" }}
           >
             <div className="webcam-placeholder w-full h-full">
-              <video ref={videoRef} autoPlay muted playsInline className="w-full h-full object-cover" />
+              {/* -scale-x-100: 화면 표시만 좌우반전(셀피 미러). 분석 좌표는 별도 보정됨. */}
+              <video ref={videoRef} autoPlay muted playsInline className="w-full h-full object-cover -scale-x-100" />
             </div>
             <div className="absolute bottom-2 left-2 bg-black/60 backdrop-blur-sm px-2 py-1 rounded-lg text-white text-xs font-medium">
               나
             </div>
             <div className="absolute top-2 right-2 flex flex-col gap-1">
               {[
-                { label: "표정", color: "bg-green-500", value: null as number | null },
-                { label: "시선", color: "bg-blue-400", value: null as number | null },
+                { label: "표정", color: "bg-green-500", value: exprScore },
+                { label: "시선", color: "bg-blue-400", value: gazeScore },
                 { label: "자세", color: "bg-emerald-400", value: poseScore },
               ].map((tag) => (
                 <div
@@ -1142,11 +1952,7 @@ function InterviewScreen({
                 <p className="text-white/90 text-sm font-semibold">실시간 피드백</p>
               </div>
               <div className="flex flex-col gap-2.5">
-                {[
-                  { type: "warn", text: "시선이 카메라에서 벗어나고 있습니다." },
-                  { type: "good", text: "자신감 있는 표정을 유지하고 있습니다." },
-                  { type: "tip", text: "말 속도를 조금 줄여보세요." },
-                ].map((fb, i) => (
+                {liveFeedback.map((fb, i) => (
                   <div
                     key={i}
                     className={`rounded-xl p-3 text-xs leading-relaxed ${
@@ -1201,18 +2007,25 @@ function InterviewScreen({
 
 function ResultScreen({
   abandoned,
+  result,
   showResults,
   onShowResults,
   onRestart,
 }: {
   abandoned: boolean;
+  result: InterviewResult | null;
   showResults: boolean;
   onShowResults: () => void;
   onRestart: () => void;
 }) {
-  const overallScore = Math.round(
-    RESULT_DATA.scores.reduce((acc, s) => acc + s.score, 0) / RESULT_DATA.scores.length
-  );
+  const overallScore = result?.overall ?? 0;
+  const hasData = !!result && result.scores.length > 0;
+  const grade =
+    overallScore >= 80
+      ? "우수한 성과입니다!"
+      : overallScore >= 60
+      ? "양호한 성과입니다."
+      : "더 연습해 봐요!";
 
   return (
     <div className="min-h-screen flex flex-col screen-enter">
@@ -1248,25 +2061,25 @@ function ResultScreen({
                 <line x1="12" y1="16" x2="12.01" y2="16"/>
               </svg>
             </div>
-            <h2 className="text-2xl font-bold text-[hsl(var(--primary))] mb-3">면접이 중도 포기되었습니다</h2>
-            <p className="text-muted-foreground max-w-sm mb-2 leading-relaxed">
+            <h2 className="text-3xl md:text-4xl font-bold text-[hsl(var(--primary))] mb-4">면접이 중도 포기되었습니다</h2>
+            <p className="text-lg text-muted-foreground max-w-md mb-2 leading-relaxed">
               모든 질문을 완료하지 않아 결과를 분석할 수 없습니다.
             </p>
-            <p className="text-muted-foreground text-sm max-w-sm mb-8">
+            <p className="text-base text-muted-foreground max-w-md mb-9">
               정확한 피드백을 받으려면 면접을 끝까지 진행해 주세요.
             </p>
             <div className="flex gap-3">
               <button
                 data-testid="button-go-home"
                 onClick={onRestart}
-                className="px-6 py-3 border border-[hsl(var(--border))] text-[hsl(var(--primary))] font-semibold rounded-xl hover:bg-[hsl(var(--secondary))] transition-colors"
+                className="px-7 py-3.5 text-base border border-[hsl(var(--border))] text-[hsl(var(--primary))] font-semibold rounded-xl hover:bg-[hsl(var(--secondary))] transition-colors"
               >
                 처음으로
               </button>
               <button
                 data-testid="button-retry-after-abandon"
                 onClick={onRestart}
-                className="px-6 py-3 navy-gradient text-white font-bold rounded-xl shadow hover:shadow-md hover:scale-105 active:scale-100 transition-all duration-150"
+                className="px-7 py-3.5 text-base navy-gradient text-white font-bold rounded-xl shadow hover:shadow-md hover:scale-105 active:scale-100 transition-all duration-150"
               >
                 다시 도전하기
               </button>
@@ -1283,7 +2096,7 @@ function ResultScreen({
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2.5">
                     <polyline points="20 6 9 17 4 12"/>
                   </svg>
-                  <span className="text-green-700 text-sm font-semibold">우수한 성과입니다!</span>
+                  <span className="text-green-700 text-sm font-semibold">{grade}</span>
                 </div>
                 <p className="text-muted-foreground text-sm max-w-md mx-auto">
                   5개 질문에 대한 면접이 완료되었습니다. 아래에서 상세 분석을 확인하세요.
@@ -1300,13 +2113,20 @@ function ResultScreen({
               </div>
             </div>
 
-            {showResults && (
+            {showResults && !hasData && (
+              <div className="navy-card rounded-2xl p-8 text-center text-muted-foreground screen-enter">
+                분석 데이터가 충분하지 않습니다. 카메라·마이크 권한을 허용하고 면접을 끝까지 진행하면
+                표정·시선·자세·음성 점수가 표시됩니다.
+              </div>
+            )}
+
+            {showResults && hasData && (
               <div className="screen-enter">
                 <div className="grid md:grid-cols-2 gap-5 mb-6">
                   <div className="navy-card rounded-2xl p-6">
                     <h3 className="font-bold text-[hsl(var(--primary))] mb-5">영역별 점수</h3>
                     <div className="flex flex-col gap-4">
-                      {RESULT_DATA.scores.map((s) => (
+                      {result!.scores.map((s) => (
                         <div key={s.name}>
                           <div className="flex justify-between mb-1.5">
                             <span className="text-sm font-medium text-foreground">{s.name}</span>
@@ -1326,7 +2146,7 @@ function ResultScreen({
                   <div className="navy-card rounded-2xl p-6">
                     <h3 className="font-bold text-[hsl(var(--primary))] mb-4">역량 레이더</h3>
                     <ResponsiveContainer width="100%" height={220}>
-                      <RadarChart data={RESULT_DATA.radar}>
+                      <RadarChart data={result!.radar}>
                         <PolarGrid stroke="hsl(214,32%,85%)" />
                         <PolarAngleAxis
                           dataKey="subject"
@@ -1346,35 +2166,10 @@ function ResultScreen({
                   </div>
                 </div>
 
-                <div className="navy-card rounded-2xl p-6 mb-6">
-                  <h3 className="font-bold text-[hsl(var(--primary))] mb-4">질문별 수행도</h3>
-                  <ResponsiveContainer width="100%" height={180}>
-                    <BarChart
-                      data={QUESTIONS.map((_, i) => ({
-                        name: `Q${i + 1}`,
-                        score: 70 + Math.floor(Math.random() * 25),
-                      }))}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(214,32%,90%)" vertical={false} />
-                      <XAxis dataKey="name" tick={{ fontSize: 12, fill: "hsl(215,25%,50%)" }} axisLine={false} tickLine={false} />
-                      <YAxis domain={[0, 100]} tick={{ fontSize: 11, fill: "hsl(215,25%,50%)" }} axisLine={false} tickLine={false} />
-                      <Tooltip
-                        contentStyle={{ borderRadius: 12, border: "1px solid hsl(214,32%,88%)", fontSize: 12 }}
-                        formatter={(v) => [`${v}점`, "점수"]}
-                      />
-                      <Bar dataKey="score" radius={[6, 6, 0, 0]}>
-                        {QUESTIONS.map((_, i) => (
-                          <Cell key={i} fill={i === 0 ? "hsl(222,47%,23%)" : "hsl(213,90%,60%)"} />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-
                 <div className="navy-card rounded-2xl p-6">
                   <h3 className="font-bold text-[hsl(var(--primary))] mb-4">AI 피드백 요약</h3>
                   <div className="grid md:grid-cols-2 gap-3">
-                    {RESULT_DATA.feedback.map((fb, i) => (
+                    {result!.feedback.map((fb, i) => (
                       <div
                         key={i}
                         className={`rounded-xl p-4 flex items-start gap-3 ${
