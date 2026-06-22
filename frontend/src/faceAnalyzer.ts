@@ -96,8 +96,8 @@ export async function startFaceAnalyzer(
           }
           buffer.push({ t: now, blend, yaw });
         }
-      } catch {
-        /* 일시적 추론 오류는 다음 프레임에서 복구 */
+      } catch (e) {
+        console.error("[faceAnalyzer] 추론 오류:", e);
       }
     }
     requestAnimationFrame(loop);
