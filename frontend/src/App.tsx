@@ -3,6 +3,7 @@ import { RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, Responsi
 import { startPoseAnalyzer, type PoseAnalyzerHandle } from "./poseAnalyzer";
 import { startFaceAnalyzer, type FaceAnalyzerHandle } from "./faceAnalyzer";
 import { startVoiceAnalyzer, type VoiceAnalyzerHandle } from "./voiceAnalyzer";
+import { TERMS_OF_SERVICE, PRIVACY_POLICY } from "./legalText";
 
 type Screen = "home" | "prep" | "interview" | "result" | "history";
 
@@ -2332,10 +2333,19 @@ function AuthModal({
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  // 회원가입 시 필수 동의 (이용약관 / 개인정보 수집·이용)
+  const [agreeTerms, setAgreeTerms] = useState(false);
+  const [agreePrivacy, setAgreePrivacy] = useState(false);
+  // 약관 전문 모달 ("terms" | "privacy" | null)
+  const [legalView, setLegalView] = useState<"terms" | "privacy" | null>(null);
 
   const handleSubmit = async () => {
     if (!email || !password) { setError("이메일과 비밀번호를 입력해 주세요."); return; }
     if (tab === "signup" && !name) { setError("이름을 입력해 주세요."); return; }
+    if (tab === "signup" && (!agreeTerms || !agreePrivacy)) {
+      setError("이용약관과 개인정보 수집·이용에 모두 동의해 주세요.");
+      return;
+    }
     setSubmitting(true);
     setError("");
     try {
@@ -2434,6 +2444,50 @@ function AuthModal({
             onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
             className="w-full px-4 py-3 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--accent))]"
           />
+
+          {tab === "signup" && (
+            <div className="flex flex-col gap-2 mt-1">
+              <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
+                <input
+                  data-testid="checkbox-agree-terms"
+                  type="checkbox"
+                  checked={agreeTerms}
+                  onChange={(e) => setAgreeTerms(e.target.checked)}
+                  className="w-4 h-4 accent-[hsl(var(--accent))] cursor-pointer"
+                />
+                <span>
+                  <span className="text-red-500">[필수]</span> 이용약관에 동의합니다.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setLegalView("terms")}
+                  className="text-[hsl(var(--accent))] underline hover:no-underline ml-auto"
+                >
+                  보기
+                </button>
+              </label>
+              <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
+                <input
+                  data-testid="checkbox-agree-privacy"
+                  type="checkbox"
+                  checked={agreePrivacy}
+                  onChange={(e) => setAgreePrivacy(e.target.checked)}
+                  className="w-4 h-4 accent-[hsl(var(--accent))] cursor-pointer"
+                />
+                <span>
+                  <span className="text-red-500">[필수]</span> 개인정보 수집·이용에 동의합니다.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setLegalView("privacy")}
+                  className="text-[hsl(var(--accent))] underline hover:no-underline ml-auto"
+                >
+                  보기
+                </button>
+              </label>
+            </div>
+          )}
+
           {error && <p className="text-red-500 text-xs px-1">{error}</p>}
           <button
             data-testid="button-auth-submit"
@@ -2455,6 +2509,49 @@ function AuthModal({
           </button>
         </p>
       </div>
+
+      {legalView && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={(e) => { e.stopPropagation(); setLegalView(null); }}
+        >
+          <div
+            className="navy-card rounded-2xl w-full max-w-lg max-h-[80vh] flex flex-col shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-6 py-4 border-b border-[hsl(var(--border))]">
+              <h4 className="font-bold text-[hsl(var(--primary))] text-base">
+                {legalView === "terms" ? "이용약관" : "개인정보 수집·이용 동의"}
+              </h4>
+              <button
+                onClick={() => setLegalView(null)}
+                className="text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                  <path d="M18 6 6 18M6 6l12 12"/>
+                </svg>
+              </button>
+            </div>
+            <div className="overflow-y-auto px-6 py-4">
+              <pre className="whitespace-pre-wrap font-sans text-xs leading-relaxed text-foreground">
+                {legalView === "terms" ? TERMS_OF_SERVICE : PRIVACY_POLICY}
+              </pre>
+            </div>
+            <div className="px-6 py-3 border-t border-[hsl(var(--border))]">
+              <button
+                onClick={() => {
+                  if (legalView === "terms") setAgreeTerms(true);
+                  else setAgreePrivacy(true);
+                  setLegalView(null);
+                }}
+                className="w-full navy-gradient text-white font-semibold py-2.5 rounded-xl text-sm hover:shadow-md transition-all"
+              >
+                동의하고 닫기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
