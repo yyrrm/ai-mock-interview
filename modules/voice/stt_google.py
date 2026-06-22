@@ -4,18 +4,13 @@ from google.cloud import speech
 
 def google_stt(audio_path):
 
-    # CWD 가 아니라 프로젝트 루트 기준으로 key.json 위치를 고정
-    # (이 파일: modules/voice/stt_google.py → 루트는 세 단계 위)
-    project_root = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "..")
-    )
-    key_path = os.path.join(project_root, "key.json")
+    # 무조건 현재 프로젝트 폴더의 key.json 사용
+    key_path = os.path.abspath("key.json")
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = key_path
 
-    # 존재 확인을 먼저 한 뒤, 파일이 있을 때만 환경변수 설정
+    # 파일 존재 확인
     if not os.path.exists(key_path):
         raise FileNotFoundError(f"key.json not found at: {key_path}")
-
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = key_path
 
     client = speech.SpeechClient()
 

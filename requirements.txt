@@ -1,41 +1,16 @@
-# 이 파일은 실제 동작 환경(conda base)의 설치 버전 기준으로 작성됨.
-# 정확한 재현이 필요하면 그대로 `pip install -r requirements.txt` 하면 된다.
-
-# ── 컴퓨터 비전 / 수치 ──
-opencv-python==4.8.1.78
-opencv-contrib-python==4.13.0.90
-mediapipe==0.10.32
-numpy==2.4.1
-scipy==1.17.1
+opencv-python==4.11.0.86
+mediapipe==0.10.21
+numpy==1.26.4
+scipy==1.16.3
 matplotlib==3.10.8
 pillow==12.1.0
-pandas==3.0.3
-
-# ── 웹 백엔드 (Flask + DB) ──
-flask==3.1.3
+python-dotenv==1.2.1
+openai==1.74.1
+pyaudio==0.2.14
+sounddevice==0.5.3
+google-cloud-speech==2.35.0
+flask==3.1.0
 Flask-SQLAlchemy==3.1.1
 SQLAlchemy==2.0.50
 PyMySQL==1.2.0
-cryptography==46.0.3
-python-dotenv==1.1.0
-
-# ── AI / 질문 생성 ──
-openai==2.15.0
-
-# ── 음성 (녹음 / STT / 분석) ──
-pyaudio==0.2.14
-sounddevice==0.5.5
-librosa==0.11.0
-google-cloud-speech==2.40.0
-# webrtcvad 는 소스 빌드 시 MSVC 가 필요해 미리 빌드된 휠 패키지를 쓴다(import 명은 동일하게 webrtcvad).
-webrtcvad-wheels==2.0.14
-
-# ── 표정 분석 (데스크톱 main.py 경로) ──
-# CPU 환경 기준. 연구실 GPU PC 에서는 CUDA 빌드로 교체:
-#   pip install torch --index-url https://download.pytorch.org/whl/cu121  (CUDA 버전에 맞게)
-torch==2.12.1
-py-feat==2.0.2
-tqdm==4.67.1
-# 주의: py-feat 가 끌어오는 torchcodec 은 torch 버전과 DLL 이 정확히 맞아야 한다.
-# 현재 torch==2.12 + torchcodec==0.14 조합은 import 실패(libtorchcodec_core4.dll) →
-# 표정 분석을 실제로 쓸 때 torch/torchcodec 호환 버전으로 맞출 것(이미지 경로만 쓰면 torchcodec 제거도 검토).
+cryptography==44.0.0

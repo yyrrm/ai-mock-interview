@@ -111,13 +111,14 @@ def analyze_face_end():
     session_id = data.get("session_id")
 
     with _sessions_lock:
-        sess = _sessions.pop(session_id, None)
+        sess = _sessions.get(session_id)
 
     if sess is None:
         return jsonify({"ok": True, "expression": None, "gaze": None})
 
     expr = sess.expression.summary()
     gaze = sess.gaze.summary()
+    _drop_session(session_id)
 
     return jsonify({
         "ok": True,

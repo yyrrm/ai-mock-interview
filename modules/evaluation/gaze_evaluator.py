@@ -31,15 +31,6 @@ def _score_stability(std: float) -> float:
     return 40.0
 
 
-def _score_blink(blink_mean: float) -> float:
-    # blink_mean: 프레임 평균 눈깜빡임 강도(0~1). 0.25 이상이면 잦은 깜빡임으로 본다.
-    if blink_mean < 0.15:
-        return 100.0
-    if blink_mean < 0.25:
-        return 70.0
-    return 40.0
-
-
 class GazeEvaluator:
     """
     시선 평가 모듈 (브라우저 FaceLandmarker 의 eyeLook 블렌드셰이프 + 머리 yaw 기반)
@@ -60,7 +51,6 @@ class GazeEvaluator:
         self._n = 0
         self._total_sum = 0.0
         self._blink_sum = 0.0
-        self._blink_sq_sum = 0.0
 
     def reset(self):
         self.__init__()
@@ -115,12 +105,11 @@ class GazeEvaluator:
         self._off_sum += off
         self._off_sq_sum += off * off
         self._blink_sum += blink
-        self._blink_sq_sum += blink * blink
         self._n += 1
         self._total_sum += centered_score
 
         scores = {"centered": centered_score}
-        metrics = {"eye_dev": round(eye_dev, 3), "head_yaw": round(head_yaw, 3), "off": round(off, 3), "blink": round(blink, 3)}
+        metrics = {"eye_dev": round(eye_dev, 3), "head_yaw": round(head_yaw, 3), "off": round(off, 3)}
         return GazeEvalResult(metrics=metrics, scores=scores, total_score=centered_score, feedback="")
 
     def summary(self) -> Optional[GazeEvalResult]:
@@ -135,8 +124,7 @@ class GazeEvaluator:
 
         centered_score = _score_centered(mean_off)
         stability_score = _score_stability(std)
-        blink_score = _score_blink(blink_mean)
-        total = float(round(0.5 * centered_score + 0.3 * stability_score + 0.2 * blink_score, 1))
+        total = float(round(0.6 * centered_score + 0.4 * stability_score, 1))
 
         fb: List[str] = []
         if mean_off > 0.30:
@@ -149,15 +137,10 @@ class GazeEvaluator:
         elif std > 0.06:
             fb.append("시선이 조금 분산됩니다. 한 곳을 차분히 응시해보세요.")
 
-        if blink_mean >= 0.25:
-            fb.append("눈깜빡임이 잦습니다. 긴장을 풀고 자연스럽게 눈을 깜빡여보세요.")
-        elif blink_mean >= 0.15:
-            fb.append("눈깜빡임이 다소 많습니다. 안정적인 시선 유지를 의식해보세요.")
-
         if not fb:
             fb.append("카메라를 안정적으로 응시했습니다. 좋은 아이컨택입니다.")
 
-        scores = {"centered": centered_score, "stability": stability_score, "blink": blink_score}
+        scores = {"centered": centered_score, "stability": stability_score}
         metrics = {
             "off_mean": round(mean_off, 3),
             "off_std": round(std, 3),

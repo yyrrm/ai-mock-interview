@@ -29,9 +29,7 @@ def _read_wav_mono_int16(path: str) -> Tuple[np.ndarray, int]:
 
     audio = np.frombuffer(raw, dtype=np.int16)
     if nch > 1:
-        # float32 로 평균내 채널 합산 시 int16 오버플로/정밀도 손실을 피한다.
-        # (RMS 계산도 어차피 float 로 하므로 int16 으로 되돌리지 않는다.)
-        audio = audio.reshape(-1, nch).astype(np.float32).mean(axis=1)
+        audio = audio.reshape(-1, nch).mean(axis=1).astype(np.int16)
 
     return audio, sr
 

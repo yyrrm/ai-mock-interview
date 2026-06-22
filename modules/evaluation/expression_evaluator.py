@@ -48,13 +48,9 @@ class ExpressionEvaluator:
     def __init__(self):
         self._smile_sum = 0.0
         self._tension_sum = 0.0
+        self._jaw_sum = 0.0
         self._n = 0
         self._total_sum = 0.0
-        # 프레임별 세부 점수의 합. summary() 의 scores 를 이 평균으로 내야
-        # total_score(프레임 점수 평균)와 같은 기준이 되어 서로 일치한다.
-        # (raw값을 먼저 평균낸 뒤 채점하면 임계값 비선형성 때문에 total 과 어긋난다.)
-        self._smile_score_sum = 0.0
-        self._tension_score_sum = 0.0
 
     def reset(self):
         self.__init__()
@@ -83,6 +79,7 @@ class ExpressionEvaluator:
         smile = (self._get(blend, "mouthSmileLeft") + self._get(blend, "mouthSmileRight")) / 2.0
         frown = (self._get(blend, "mouthFrownLeft") + self._get(blend, "mouthFrownRight")) / 2.0
         brow_down = (self._get(blend, "browDownLeft") + self._get(blend, "browDownRight")) / 2.0
+        jaw_open = self._get(blend, "jawOpen")
 
         tension = frown + 0.7 * brow_down
 
@@ -93,8 +90,7 @@ class ExpressionEvaluator:
 
         self._smile_sum += smile
         self._tension_sum += tension
-        self._smile_score_sum += smile_score
-        self._tension_score_sum += tension_score
+        self._jaw_sum += jaw_open
         self._total_sum += total
         self._n += 1
 
@@ -102,6 +98,7 @@ class ExpressionEvaluator:
         metrics = {
             "smile": round(smile, 3),
             "tension": round(tension, 3),
+            "jaw_open": round(jaw_open, 3),
         }
         return ExpressionEvalResult(metrics=metrics, scores=scores, total_score=total, feedback="")
 
@@ -112,15 +109,10 @@ class ExpressionEvaluator:
 
         smile = self._smile_sum / self._n
         tension = self._tension_sum / self._n
+        jaw = self._jaw_sum / self._n
         avg_total = float(round(self._total_sum / self._n, 1))
 
-        # scores 는 프레임별 점수의 평균 → total_score(0.5*smile+0.5*tension 의 평균)와
-        # 같은 기준이라 scores 를 가중합하면 total 과 일치한다.
-        # raw 평균(smile/tension)은 아래 피드백 임계값 판단에만 쓴다.
-        scores = {
-            "smile": round(self._smile_score_sum / self._n, 1),
-            "tension": round(self._tension_score_sum / self._n, 1),
-        }
+        scores = {"smile": _score_smile(smile), "tension": _score_tension(tension)}
 
         fb: List[str] = []
         if tension > 0.25:
@@ -139,6 +131,7 @@ class ExpressionEvaluator:
         metrics = {
             "smile_mean": round(smile, 3),
             "tension_mean": round(tension, 3),
+            "jaw_mean": round(jaw, 3),
             "frames": self._n,
         }
         return ExpressionEvalResult(metrics=metrics, scores=scores, total_score=avg_total, feedback=" ".join(fb))

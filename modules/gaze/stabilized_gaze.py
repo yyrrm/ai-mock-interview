@@ -146,10 +146,6 @@ while cap.isOpened():
                     gaze_direction_y = "Center"
 
             except Exception:
-                # 랜드마크 누락 방어 (제거 금지).
-                # TODO: 라벨이 루프 밖에서만 초기화(59~60행)되므로 실패 시
-                #       gaze_direction_x/y가 직전 값으로 남을 수 있음(stale).
-                #       동작 변경 위험으로 문서화만 함. (사람 검토 필요)
                 pass
 
     # --- UI 텍스트 표시 (원래 UI 그대로) ---

@@ -89,8 +89,6 @@ def gaze_worker():
     while flags.RUNNING:
 
         if shared_frame_queue.empty():
-            # 큐가 비어있을 때 CPU 점유를 막기 위해 잠깐 쉼 (pose 워커와 동일하게 0.005초)
-            time.sleep(0.005)
             continue
 
         frame = shared_frame_queue.get()
@@ -100,8 +98,6 @@ def gaze_worker():
             try:
                 tracker.calibrate()
             except Exception:
-                # 보정 실패 방어 (제거 금지). 보정값이 갱신되지 않을 수 있으나
-                # 라벨 stale 문제와는 무관함.
                 pass
 
             # 전체/정면 누적 리셋

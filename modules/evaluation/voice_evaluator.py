@@ -44,29 +44,14 @@ def _score_clarity(confidence: float) -> float:
     return 40.0
 
 
-def _score_delta_db(delta_db: float) -> float:
-    # baseline(평소 음량) 대비 변화량. 0 근처가 가장 좋다.
-    if -3.0 <= delta_db <= 6.0:
-        return 100.0
-    if -6.0 <= delta_db <= 9.0:
-        return 70.0
-    return 40.0
-
-
-def _score_std_db(std_db: float) -> float:
-    # 클립 내부 음량 흔들림. 작을수록 안정적.
-    if std_db <= 4.0:
-        return 100.0
-    if std_db <= 7.0:
-        return 70.0
-    return 40.0
-
-
 def _score_volume(delta_db: float, std_db: float) -> float:
     # rubric 기준은 “개인 기준 대비 변화”.
-    # delta(평소 대비 음량 변화)와 std(클립 내 흔들림)를 따로 채점해 가중 평균한다.
-    # → 한 지표만 나빠도 점수가 100→70 으로 급락하지 않고 완만하게 반영된다.
-    return round(0.6 * _score_delta_db(delta_db) + 0.4 * _score_std_db(std_db), 1)
+    # 여기선 baseline 대비 delta_db로 근사 + 클립 내부 흔들림(std_db)을 보조로 사용.
+    if -3.0 <= delta_db <= 6.0 and std_db <= 4.0:
+        return 100.0
+    if -6.0 <= delta_db <= 9.0 and std_db <= 7.0:
+        return 70.0
+    return 40.0
 
 
 def _score_silence(silence_per_min: float) -> float:
@@ -156,11 +141,15 @@ class VoiceEvaluator:
 
         silence_per_min = float(silence_segments_2s) / duration_min
 
-        # 인자값을 일관된 타입으로 정규화해 이후 분기에서 그대로 사용한다.
-        duration_sec = float(duration_sec)
-        mean_db = float(mean_db)
-        std_db = float(std_db)
-        silence_segments_2s = int(silence_segments_2s)
+        # 아래 분기는 기존 evaluate() 본문과 동일하게 audio.* 대신 인자값을 사용한다.
+        class _A:  # compute_audio_stats 결과와 같은 필드 접근을 위한 경량 어댑터
+            pass
+
+        audio = _A()
+        audio.duration_sec = float(duration_sec)
+        audio.mean_db = float(mean_db)
+        audio.std_db = float(std_db)
+        audio.silence_segments_2s = int(silence_segments_2s)
 
         # ---- 발음(CER/WER) / 명료도(STT 신뢰도) ----
         # 팀 합의:
@@ -185,13 +174,13 @@ class VoiceEvaluator:
             clarity_method = "confidence"
 
         metrics: Dict[str, object] = {
-            "duration_sec": round(duration_sec, 2),
+            "duration_sec": round(audio.duration_sec, 2),
             "wpm": round(wpm, 1),
-            "mean_db": round(mean_db, 2),
-            "std_db": round(std_db, 2),
+            "mean_db": round(audio.mean_db, 2),
+            "std_db": round(audio.std_db, 2),
             "baseline_db": round(baseline_db, 2),
             "delta_db": round(delta_db, 2),
-            "silence_segments_2s": int(silence_segments_2s),
+            "silence_segments_2s": int(audio.silence_segments_2s),
             "silence_per_min": round(silence_per_min, 2),
             "cer": (round(cer_ratio * 100.0, 2) if cer_ratio is not None else None),
             "wer": (round(wer_ratio * 100.0, 2) if wer_ratio is not None else None),  # 참고용
@@ -200,10 +189,10 @@ class VoiceEvaluator:
         }
 
         # ---- scores per metric ----
-        # pronunciation(CER, 주 지표)과 clarity(신뢰도, 보조 지표)는 동시에 켜지지 않는다.
+        # pronunciation(WER, 주 지표)과 clarity(신뢰도, 보조 지표)는 동시에 켜지지 않는다.
         scores: Dict[str, Optional[float]] = {
             "speed": _score_speed(wpm),
-            "volume": _score_volume(delta_db, std_db),
+            "volume": _score_volume(delta_db, audio.std_db),
             "silence": _score_silence(silence_per_min),
             "pronunciation": pronunciation_score,   # CER (기준 문장 있을 때만)
             "clarity": clarity_score,                # STT 신뢰도 (자유 답변일 때만)
@@ -244,10 +233,9 @@ class VoiceEvaluator:
         elif silence_per_min >= 3:
             feedback_parts.append("침묵 구간이 조금 있습니다. 문장 연결을 의식해보세요.")
 
-        # 점수(_score_volume)가 delta·std 를 모두 반영하므로 피드백도 둘을 독립적으로 낸다.
         if not (-3.0 <= delta_db <= 6.0):
             feedback_parts.append("목소리 크기 변화가 커서 전달력이 떨어질 수 있습니다. 일정한 음량을 유지해보세요.")
-        if std_db > 7.0:
+        elif audio.std_db > 7.0:
             feedback_parts.append("음량이 들쭉날쭉합니다. 문장 단위로 호흡을 안정화해보세요.")
 
         if clarity_method == "confidence" and stt_confidence is not None:

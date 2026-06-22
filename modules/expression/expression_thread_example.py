@@ -43,10 +43,9 @@ from modules.camera.camera_manager import shared_frame_queue
 from modules.expression.AU_analyzer import calc_total_expression_score, expression_text_feedback
 
 try:
-    from modules.expression.emotion_stabilizer import emo_stabilizer, reset_emotion_buffer
+    from modules.expression.emotion_stabilizer import emo_stabilizer
 except Exception:
     emo_stabilizer = None
-    reset_emotion_buffer = None
 
 expression_result_queue = queue.Queue(maxsize=5)
 pyfeat_detector = Detector()
@@ -192,7 +191,6 @@ def expression_worker(padding=20, analyze_every_n_frames=3):
 
     while flags.RUNNING:
         if shared_frame_queue.empty():
-            time.sleep(0.005)
             continue
 
         frame = shared_frame_queue.get()
@@ -277,11 +275,6 @@ def expression_worker(padding=20, analyze_every_n_frames=3):
     print("Expression Thread Stopped")
 
 def start_expression_thread(_emotion_detector=None):
-    # 새 세션 시작 시 이전 세션 값이 남지 않도록 전역 버퍼 초기화
-    global au_buffer
-    au_buffer.clear()
-    if reset_emotion_buffer is not None:
-        reset_emotion_buffer()
     t = threading.Thread(target=expression_worker, daemon=False)
     t.start()
     print("expression_thread_example 실행됨! (Camera 공유 버전)")

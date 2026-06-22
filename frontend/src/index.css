@@ -134,16 +134,8 @@
   * {
     @apply border-border;
   }
-  /* 기본 글자 크기를 키워(16→20px) rem 기반 Tailwind 텍스트가 전체적으로 커지게 한다.
-     text-[10px] 처럼 px 로 고정한 미세 라벨은 영향받지 않는다. */
-  html {
-    font-size: 20px;
-  }
   body {
     @apply font-sans antialiased bg-background text-foreground;
-    /* 한국어 줄바꿈: 어절(단어) 중간에서 끊기지 않게 하고, 줄 끝 고아 단어를 줄인다. */
-    word-break: keep-all;
-    text-wrap: pretty;
   }
 }
 
