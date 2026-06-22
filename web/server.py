@@ -25,34 +25,31 @@ if ROOT_DIR not in sys.path:
 # 진짜 UI(React) 빌드 결과물 폴더. frontend 에서 `npm run build` 하면 생성된다.
 DIST_DIR = os.path.join(ROOT_DIR, "frontend", "dist")
 
-# 아래 import 들은 위의 sys.path 설정(루트 추가) 이후에 와야 하므로
-# 의도적으로 파일 상단이 아닌 이 위치에 둔다(E402 경고는 noqa 로 무시).
-from dotenv import load_dotenv  # noqa: E402
+from dotenv import load_dotenv
 
 # .env (OPENAI_API_KEY, MYSQL_*, SECRET_KEY 등) 로드
 load_dotenv()
 
-from modules.question.question_module import (  # noqa: E402
+from modules.question.question_module import (
     analyze_resume,
     make_question,
     build_cover_letter_text,
     COVER_LETTER_SECTIONS,
     COVER_LETTER_GUIDANCE,
 )
-from models import db, ensure_database, database_url  # noqa: E402
-from auth import auth_bp  # noqa: E402
-from records import records_bp  # noqa: E402
-from pose import pose_bp  # noqa: E402
-from face import face_bp  # noqa: E402
-from voice import voice_bp  # noqa: E402
-from tts import tts_bp  # noqa: E402
+from models import db, ensure_database, database_url
+from auth import auth_bp
+from records import records_bp
+from pose import pose_bp
+from face import face_bp
+from voice import voice_bp
 
 app = Flask(__name__, static_folder=None)
 # Cloudflare/nginx 리버스 프록시 뒤에 있으므로, 원래 요청이 HTTPS였음을
 # X-Forwarded-Proto 헤더로 Flask 에 알려준다(Secure 쿠키가 정상 동작하려면 필수).
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
-# 요청 본문 용량 제한 (25MB) — 카메라/음성 분석 배치 POST 를 수용한다
+# 요청 본문 용량 제한 (1MB) — 자기소개서 텍스트만 받으므로 작게 잡는다
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
 
 # ===============================
@@ -83,7 +80,6 @@ app.register_blueprint(records_bp)
 app.register_blueprint(pose_bp)
 app.register_blueprint(face_bp)
 app.register_blueprint(voice_bp)
-app.register_blueprint(tts_bp)
 
 
 # ===============================
@@ -91,19 +87,9 @@ app.register_blueprint(tts_bp)
 #   frontend/dist 의 index.html + assets 를 서빙하고,
 #   존재하지 않는 경로는 SPA 라우팅을 위해 index.html 로 폴백한다.
 # ===============================
-def _no_store(resp):
-    """index.html 은 항상 새로 받게 하여 옛 빌드가 캐시에 남지 않도록 한다.
-    (assets/ 의 JS·CSS 는 파일명에 해시가 붙어 내용이 바뀌면 이름도 바뀌므로
-    캐시돼도 안전 — 굳이 막지 않는다.)"""
-    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-    resp.headers["Pragma"] = "no-cache"
-    resp.headers["Expires"] = "0"
-    return resp
-
-
 @app.route("/")
 def index():
-    return _no_store(send_from_directory(DIST_DIR, "index.html"))
+    return send_from_directory(DIST_DIR, "index.html")
 
 
 @app.route("/<path:path>")
@@ -118,8 +104,8 @@ def static_files(path):
             "<p><code>cd frontend &amp;&amp; npm run build</code> 를 먼저 실행하세요.</p>",
             500,
         )
-    # SPA 폴백 — index.html 은 캐시 금지
-    return _no_store(send_from_directory(DIST_DIR, "index.html"))
+    # SPA 폴백
+    return send_from_directory(DIST_DIR, "index.html")
 
 
 # ===============================

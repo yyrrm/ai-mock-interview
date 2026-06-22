@@ -19,13 +19,11 @@ __pycache__/
 
 # ===== 프론트엔드(React/Vite) =====
 frontend/node_modules/
+frontend/dist/
 npm-debug.log*
 
 # ===== 개인 배포 설정 (공유 레포에 올리지 않음) =====
 deploy/
-
-# ===== 로컬 도구 (cloudflared 바이너리·터널/실행 로그 — 공유 안 함) =====
-tools/
 
 # ===== 임시/생성 파일 =====
 temp.wav
@@ -40,3 +38,11 @@ Thumbs.db
 
 # ===== Claude Code 로컬 설정 =====
 .claude/settings.local.json
+
+# ===== 백업/임시 잡파일 (서버 작업 중 생성, 공유 안 함) =====
+*.bak
+*.bak.*
+frontend/dist.bak/
+frontend/dist.bak.*/
+/null
+tools/
