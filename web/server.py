@@ -81,9 +81,19 @@ app.register_blueprint(tts_bp)
 #   frontend/dist 의 index.html + assets 를 서빙하고,
 #   존재하지 않는 경로는 SPA 라우팅을 위해 index.html 로 폴백한다.
 # ===============================
+def _no_store(resp):
+    """index.html 은 항상 새로 받게 하여 옛 빌드가 캐시에 남지 않도록 한다.
+    (assets/ 의 JS·CSS 는 파일명에 해시가 붙어 내용이 바뀌면 이름도 바뀌므로
+    캐시돼도 안전 — 굳이 막지 않는다.)"""
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
+
+
 @app.route("/")
 def index():
-    return send_from_directory(DIST_DIR, "index.html")
+    return _no_store(send_from_directory(DIST_DIR, "index.html"))
 
 
 @app.route("/<path:path>")
@@ -98,8 +108,8 @@ def static_files(path):
             "<p><code>cd frontend &amp;&amp; npm run build</code> 를 먼저 실행하세요.</p>",
             500,
         )
-    # SPA 폴백
-    return send_from_directory(DIST_DIR, "index.html")
+    # SPA 폴백 — index.html 은 캐시 금지
+    return _no_store(send_from_directory(DIST_DIR, "index.html"))
 
 
 # ===============================
