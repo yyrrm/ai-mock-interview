@@ -19,7 +19,6 @@ __pycache__/
 
 # ===== 프론트엔드(React/Vite) =====
 frontend/node_modules/
-frontend/dist/
 npm-debug.log*
 
 # ===== 개인 배포 설정 (공유 레포에 올리지 않음) =====
