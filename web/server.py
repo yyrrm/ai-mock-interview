@@ -14,6 +14,7 @@ import sys
 from datetime import timedelta
 
 from flask import Flask, request, jsonify, send_from_directory
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 # 프로젝트 루트(상위 폴더)를 import 경로에 추가 → modules 패키지 사용
 WEB_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -47,9 +48,12 @@ from voice import voice_bp  # noqa: E402
 from tts import tts_bp  # noqa: E402
 
 app = Flask(__name__, static_folder=None)
+# Cloudflare/nginx 리버스 프록시 뒤에 있으므로, 원래 요청이 HTTPS였음을
+# X-Forwarded-Proto 헤더로 Flask 에 알려준다(Secure 쿠키가 정상 동작하려면 필수).
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
-# 요청 본문 용량 제한 (1MB) — 자기소개서 텍스트만 받으므로 작게 잡는다
-app.config["MAX_CONTENT_LENGTH"] = 1 * 1024 * 1024
+# 요청 본문 용량 제한 (25MB) — 카메라/음성 분석 배치 POST 를 수용한다
+app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
 
 # ===============================
 # 데이터베이스 / 세션 설정
@@ -61,6 +65,12 @@ app.secret_key = os.getenv("SECRET_KEY", "dev-secret-change-in-production")
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=2)
 app.config["SQLALCHEMY_DATABASE_URI"] = database_url()
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+
+# 로그인 세션 쿠키 보안 플래그 (HTTPS 환경 기준)
+# SECURE 는 .env 의 COOKIE_SECURE 로 제어 — 운영(HTTPS)=1, 로컬개발(HTTP)=0
+app.config["SESSION_COOKIE_SECURE"] = os.getenv("COOKIE_SECURE", "1") == "1"
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
 # 앱 전용 DB(스키마)가 없으면 생성한 뒤, ORM 초기화 + 테이블 생성
 ensure_database()
