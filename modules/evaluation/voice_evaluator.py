@@ -141,6 +141,33 @@ class VoiceEvaluator:
 
         silence_per_min = float(silence_segments_2s) / duration_min
 
+        # ---- 무응답(말을 거의 안 함) 게이트 ----
+        # 답을 하지 않고 다음 질문만 눌러도 음량/침묵 지표가 "조용하지만 안정적"으로
+        # 잡혀 점수가 부풀던 문제를 막는다. 인식된 단어가 사실상 없고(word_count<=1)
+        # 세션 평균 음량이 침묵 임계(-45dBFS) 수준이면 '발화 없음'으로 보고 낮은 점수를 준다.
+        # (STT 미지원 브라우저여도 mean_db 만으로 침묵을 판별하므로 두 조건을 함께 본다.)
+        SPEECH_FLOOR_DB = -45.0  # 서버/브라우저 공통 침묵 임계
+        no_speech = (int(word_count) <= 1) and (float(mean_db) <= SPEECH_FLOOR_DB)
+        if no_speech:
+            metrics = {
+                "duration_sec": round(float(duration_sec), 2),
+                "wpm": round(wpm, 1),
+                "mean_db": round(float(mean_db), 2),
+                "std_db": round(float(std_db), 2),
+                "baseline_db": round(baseline_db, 2),
+                "delta_db": round(delta_db, 2),
+                "silence_segments_2s": int(silence_segments_2s),
+                "silence_per_min": round(silence_per_min, 2),
+                "no_speech": True,
+            }
+            return VoiceEvalResult(
+                metrics=metrics,
+                scores={"speed": None, "volume": None, "silence": None,
+                        "pronunciation": None, "clarity": None},
+                total_score=10.0,
+                feedback="답변 음성이 거의 감지되지 않았습니다. 질문에 실제로 소리 내어 답변해야 평가가 가능합니다.",
+            )
+
         # 아래 분기는 기존 evaluate() 본문과 동일하게 audio.* 대신 인자값을 사용한다.
         class _A:  # compute_audio_stats 결과와 같은 필드 접근을 위한 경량 어댑터
             pass

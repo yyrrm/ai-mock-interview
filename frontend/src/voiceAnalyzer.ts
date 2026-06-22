@@ -11,11 +11,18 @@ const SILENCE_DB = -45; // 서버 audio_metrics 와 동일한 침묵 임계 (dBF
 const MIN_SILENCE_FRAMES = Math.round(2000 / SAMPLE_INTERVAL_MS); // 2초 이상 침묵
 const BASELINE_WINDOW_FRAMES = Math.round(5000 / SAMPLE_INTERVAL_MS); // 앞 5초 = 기준 음량
 
-export type VoiceSummary = { score: number | null; feedback: string };
+export type VoiceSummary = {
+  score: number | null;
+  feedback: string;
+  /** 서버가 '발화 없음(무응답)' 으로 판정했는지. 종합점수 상한 처리에 쓴다. */
+  noSpeech?: boolean;
+};
 
 export type VoiceAnalyzerHandle = {
-  /** 분석 종료 → 서버 점수/피드백 반환. fallbackText: STT 미지원 시 단어 수 대용(답변 메모) */
+  /** 분석 종료 → 서버 점수/피드백 반환. fallbackText: STT 미지원 시 단어 수 대용 */
   stop: (opts?: { fallbackText?: string }) => Promise<VoiceSummary>;
+  /** 마지막 호출 이후 인식된 답변 텍스트를 돌려주고 버퍼를 비운다(다음 질문 생성용). STT 미지원 시 "". */
+  takeTranscript: () => string;
 };
 
 type SpeechRecognitionish = {
@@ -77,6 +84,7 @@ export function startVoiceAnalyzer(stream: MediaStream): VoiceAnalyzerHandle {
 
   // ── Web Speech: 텍스트/단어수/신뢰도 (있을 때만) ─────────
   let transcript = "";
+  let takenLen = 0; // takeTranscript() 가 이미 반환한 transcript 길이(질문별 증분 추출용)
   const confidences: number[] = [];
   const SR: (new () => SpeechRecognitionish) | undefined =
     (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -116,6 +124,11 @@ export function startVoiceAnalyzer(stream: MediaStream): VoiceAnalyzerHandle {
   }
 
   return {
+    takeTranscript() {
+      const fresh = transcript.slice(takenLen).trim();
+      takenLen = transcript.length;
+      return fresh;
+    },
     async stop(opts) {
       running = false;
       if (sampleTimer) window.clearInterval(sampleTimer);
@@ -173,6 +186,7 @@ export function startVoiceAnalyzer(stream: MediaStream): VoiceAnalyzerHandle {
         return {
           score: typeof data.score === "number" ? data.score : null,
           feedback: data.feedback || "",
+          noSpeech: data?.metrics?.no_speech === true,
         };
       } catch {
         return { score: null, feedback: "" };

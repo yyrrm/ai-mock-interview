@@ -171,27 +171,49 @@ type InterviewResult = {
   scores: { name: string; score: number; color: string }[];
   radar: { subject: string; A: number }[];
   feedback: { type: "good" | "improve"; text: string }[];
+  // 평가 무효 사유(예: 3분 미만). 있으면 점수를 매기지 않고 저장도 하지 않는다.
+  invalidReason?: string;
 };
 
 // 실제 분석 채널 점수/피드백으로 결과 리포트 데이터를 만든다.
 // 측정되지 않은 채널(점수 null)은 제외하고, 종합점수는 측정된 것들의 평균.
-function buildResult(scores: ChannelScores, fb: ChannelFeedback): InterviewResult {
+// 무응답(음성 미감지) 시 종합점수 상한 — 표정/시선/자세가 높아도 이 값을 넘지 못한다.
+const NO_SPEECH_OVERALL_CAP = 30;
+const MIN_INTERVIEW_SEC = 3 * 60; // 3분 — 이보다 짧으면 점수를 매기지 않고 저장도 하지 않는다
+
+function buildResult(
+  scores: ChannelScores,
+  fb: ChannelFeedback,
+  flags: { noSpeech?: boolean } = {},
+): InterviewResult {
   const items = CHANNELS.map((c) => ({ ...c, score: scores[c.key], feedback: fb[c.key] })).filter(
     (c): c is typeof c & { score: number } => c.score != null
   );
-  const overall = items.length
+  let overall = items.length
     ? Math.round(items.reduce((a, c) => a + c.score, 0) / items.length)
     : 0;
+
+  const feedback = items
+    .filter((c) => c.feedback)
+    .map((c) => ({
+      type: c.score >= 80 ? ("good" as const) : ("improve" as const),
+      text: `[${c.name}] ${c.feedback}`,
+    }));
+
+  // 실제 답변이 없었다면(무응답) 종합점수를 상한으로 누르고 안내 문구를 맨 앞에 넣는다.
+  if (flags.noSpeech) {
+    overall = Math.min(overall, NO_SPEECH_OVERALL_CAP);
+    feedback.unshift({
+      type: "improve" as const,
+      text: "[종합] 답변 음성이 거의 감지되지 않았습니다. 질문에 실제로 소리 내어 답변해야 정상적으로 평가됩니다.",
+    });
+  }
+
   return {
     overall,
     scores: items.map((c) => ({ name: c.name, score: c.score, color: c.color })),
     radar: items.map((c) => ({ subject: c.radar, A: c.score })),
-    feedback: items
-      .filter((c) => c.feedback)
-      .map((c) => ({
-        type: c.score >= 80 ? ("good" as const) : ("improve" as const),
-        text: `[${c.name}] ${c.feedback}`,
-      })),
+    feedback,
   };
 }
 
@@ -216,7 +238,6 @@ export default function App() {
   const [guidance, setGuidance] = useState("");              // 질문 비중 지침
   const [topic, setTopic] = useState("면접");                // 면접 주제(직무·경력 조립값) — 첫 질문·꼬리 질문 생성에 사용
   const [targetQuestions, setTargetQuestions] = useState(DEFAULT_QUESTION_COUNT); // 이번 면접 질문 개수(사용자 선택)
-  const [answer, setAnswer] = useState("");                  // 현재 질문에 대한 답변 메모
   const [busy, setBusy] = useState(false);                   // API 호출 중
   const [poseScore, setPoseScore] = useState<number | null>(null); // 실시간 자세 점수
   const [exprScore, setExprScore] = useState<number | null>(null); // 실시간 표정 점수
@@ -227,7 +248,7 @@ export default function App() {
   const poseRef = useRef<PoseAnalyzerHandle | null>(null);
   const faceRef = useRef<FaceAnalyzerHandle | null>(null);
   const voiceRef = useRef<VoiceAnalyzerHandle | null>(null);
-  const answersRef = useRef<string[]>([]); // 음성 단어수 폴백용(STT 미지원 시) 답변 누적
+  const answersRef = useRef<string[]>([]); // STT로 인식된 답변 누적(음성 단어수 폴백 + 마지막 답변 반영용)
   const sessionIdRef = useRef<string>("");
 
   // 앱 로드 시 세션 복원 — 새로고침해도 로그인 유지
@@ -265,6 +286,7 @@ export default function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const prepVideoRef = useRef<HTMLVideoElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const interviewStartRef = useRef<number>(0); // 면접 시작 시각(ms) — 종료 시 실제 진행 시간 계산용
   const streamRef = useRef<MediaStream | null>(null);
 
   const navigate = useCallback(
@@ -318,6 +340,7 @@ export default function App() {
     if (screen === "prep") {
       startCamera(prepVideoRef);
     } else if (screen === "interview") {
+      interviewStartRef.current = Date.now();
       timerRef.current = setInterval(() => setTimer((t) => t + 1), 1000);
       setPoseScore(null);
       setExprScore(null);
@@ -422,7 +445,6 @@ export default function App() {
     setGuidance(gd);
     setQuestions([firstQ]);
     setAsked([firstQ]);
-    setAnswer("");
     answersRef.current = []; // 새 면접 시작 → 답변 누적 초기화
     setCurrentQ(0);
     setTimer(0);
@@ -439,13 +461,16 @@ export default function App() {
       return;
     }
     setBusy(true);
+    // 직전 질문에 대한 음성 답변을 STT 전사에서 가져와 꼬리질문 생성에 사용한다.
+    const spokenAnswer = voiceRef.current?.takeTranscript() ?? "";
+    if (spokenAnswer.trim()) answersRef.current.push(spokenAnswer.trim());
     let nextQ = QUESTIONS[questions.length % QUESTIONS.length];
     try {
       const res = await fetch("/api/question", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          answer_text: answer,
+          answer_text: spokenAnswer,
           topic,
           previous_questions: asked,
           resume_context: resumeText,
@@ -457,19 +482,23 @@ export default function App() {
     } catch {
       // 오류 시 폴백 질문 사용
     }
-    if (answer.trim()) answersRef.current.push(answer.trim());
     setQuestions((qs) => [...qs, nextQ]);
     setAsked((a) => [...a, nextQ]);
-    setAnswer("");
     setCurrentQ((q) => q + 1);
     setBusy(false);
   };
 
   const endInterview = async (isAbandoned: boolean) => {
     stopCamera();
-    if (answer.trim()) answersRef.current.push(answer.trim()); // 마지막 답변 반영
+    // 실제 진행 시간(초). 3분 미만이면 충실한 면접으로 보지 않아 점수를 매기지 않고 저장도 하지 않는다.
+    const elapsedSec = interviewStartRef.current
+      ? (Date.now() - interviewStartRef.current) / 1000
+      : 0;
+    const tooShort = elapsedSec < MIN_INTERVIEW_SEC;
+    const lastSpoken = voiceRef.current?.takeTranscript() ?? "";
+    if (lastSpoken.trim()) answersRef.current.push(lastSpoken.trim()); // 마지막 답변 반영
 
-    // 4개 분석기를 종료하고 세션 평균 점수/피드백을 회수한다.
+    // 분석기는 어떤 경우든 정리(리소스 해제). 너무 짧은 면접은 점수를 버린다.
     const pose = poseRef.current
       ? await poseRef.current.stop()
       : { score: null as number | null, feedback: "" };
@@ -483,6 +512,22 @@ export default function App() {
       : { score: null as number | null, feedback: "" };
     voiceRef.current = null;
 
+    // 3분 미만: 평가 무효 — 점수/저장 없이 안내만 보여준다.
+    if (tooShort) {
+      setResult({
+        overall: 0,
+        scores: [],
+        radar: [],
+        feedback: [],
+        invalidReason:
+          "면접 진행 시간이 3분 미만으로 너무 짧습니다. 각 질문에 충분히 답변하며 3분 이상 진행해야 평가됩니다.",
+      });
+      setAbandoned(isAbandoned);
+      window.history.pushState({ screen: "result" }, "");
+      setScreen("result");
+      return;
+    }
+
     const scores: ChannelScores = {
       expression: face.expression,
       gaze: face.gaze,
@@ -495,7 +540,9 @@ export default function App() {
       pose: pose.feedback,
       voice: voice.feedback,
     };
-    const built = buildResult(scores, fb);
+    // 음성이 거의 감지되지 않으면(무응답) 종합점수를 제한한다.
+    // 표정·시선·자세는 '카메라 앞에 있었는지'만 보므로, 충실한 답변 없이도 높게 나올 수 있다.
+    const built = buildResult(scores, fb, { noSpeech: voice.noSpeech === true });
     setResult(built);
 
     // 끝까지 완료 + 측정된 점수가 하나라도 있으면 기록으로 저장한다(로그인 사용자, 서버 DB).
@@ -556,8 +603,6 @@ export default function App() {
             timer={fmt(timer)}
             feedbackOpen={feedbackOpen}
             onToggleFeedback={() => setFeedbackOpen((f) => !f)}
-            answer={answer}
-            onAnswerChange={setAnswer}
             busy={busy}
             poseScore={poseScore}
             exprScore={exprScore}
@@ -1251,7 +1296,19 @@ function PrepScreen({
 
   const allChecked = checked.every(Boolean);
 
+  // 자기소개서를 작성해야 면접을 시작할 수 있다(맞춤 질문의 근거가 되므로 필수).
+  // 모든 문항 합계가 최소 글자 수 이상이어야 '작성함'으로 본다.
+  const MIN_COVER_LETTER_CHARS = 50;
+  const coverLetterChars = COVER_SECTIONS.reduce(
+    (sum, sec) => sum + (sections[sec.key] || "").trim().length,
+    0,
+  );
+  const coverLetterFilled = coverLetterChars >= MIN_COVER_LETTER_CHARS;
+
+  const canStart = allChecked && coverLetterFilled;
+
   const handleStart = async () => {
+    if (!canStart) return;
     setSubmitting(true);
     const topic = buildTopic(jobRole, career, years);
     await onStart(sections, topic, questionCount);
@@ -1408,9 +1465,12 @@ function PrepScreen({
 
         {/* 자기소개서 문항 작성 — 입력 내용을 AI가 분석해 맞춤 질문을 생성한다 */}
         <div className="navy-card rounded-2xl p-6 mb-8 text-left">
-          <h3 className="font-bold text-[hsl(var(--primary))] mb-1">자기소개서 문항</h3>
+          <div className="flex items-baseline justify-between mb-1">
+            <h3 className="font-bold text-[hsl(var(--primary))]">자기소개서 문항</h3>
+            <span className="text-xs text-[hsl(var(--accent))] font-semibold">필수</span>
+          </div>
           <p className="text-muted-foreground text-sm mb-4">
-            각 항목을 1,000~2,000자 이내로 작성하세요. (작성하지 않고 시작해도 됩니다 · 성장과정은 질문 비중이 낮습니다)
+            각 항목을 1,000~2,000자 이내로 작성하세요. (맞춤 질문의 근거가 되므로 최소 한 문항 이상 작성해야 시작할 수 있습니다 · 성장과정은 질문 비중이 낮습니다)
           </p>
           <div className="grid md:grid-cols-2 gap-4">
             {COVER_SECTIONS.map((sec) => {
@@ -1579,23 +1639,28 @@ function PrepScreen({
               {!allChecked && (
                 <p className="text-xs text-orange-500 mt-1">모든 항목을 확인해야 면접을 시작할 수 있습니다.</p>
               )}
+              {allChecked && !coverLetterFilled && (
+                <p className="text-xs text-orange-500 mt-1">자기소개서를 작성해야 면접을 시작할 수 있습니다.</p>
+              )}
             </div>
 
             <button
               data-testid="button-start-interview"
               onClick={handleStart}
-              disabled={!allChecked || submitting}
+              disabled={!canStart || submitting}
               className={`mt-auto font-bold py-4 rounded-2xl transition-all duration-200 ${
-                allChecked && !submitting
+                canStart && !submitting
                   ? "navy-gradient text-white shadow-lg hover:shadow-xl hover:scale-105 active:scale-100 cursor-pointer"
                   : "bg-[hsl(var(--muted))] text-muted-foreground cursor-not-allowed"
               }`}
             >
               {submitting
                 ? "자기소개서 분석 중..."
-                : allChecked
-                ? "면접 시작하기"
-                : "체크리스트를 모두 완료해 주세요"}
+                : !allChecked
+                ? "체크리스트를 모두 완료해 주세요"
+                : !coverLetterFilled
+                ? "자기소개서를 작성해 주세요"
+                : "면접 시작하기"}
             </button>
           </div>
         </div>
@@ -1637,8 +1702,6 @@ function InterviewScreen({
   timer,
   feedbackOpen,
   onToggleFeedback,
-  answer,
-  onAnswerChange,
   busy,
   poseScore,
   exprScore,
@@ -1653,8 +1716,6 @@ function InterviewScreen({
   timer: string;
   feedbackOpen: boolean;
   onToggleFeedback: () => void;
-  answer: string;
-  onAnswerChange: (v: string) => void;
   busy: boolean;
   poseScore: number | null;
   exprScore: number | null;
@@ -1899,20 +1960,6 @@ function InterviewScreen({
               {busy ? "다음 질문을 생성하는 중입니다..." : question}
             </p>
           </div>
-
-          {/* 답변 메모 — 입력하면 AI 꼬리질문에 반영된다 */}
-          <div className="flex-[3] min-h-0 flex flex-col rounded-2xl border border-white/10 bg-[hsl(222,47%,15%)] p-4 shadow-lg">
-            <label className="text-white/60 text-sm mb-2 block">
-              내 답변 메모{" "}
-              <span className="text-white/30">(입력하면 다음 질문에 반영됩니다)</span>
-            </label>
-            <textarea
-              value={answer}
-              onChange={(e) => onAnswerChange(e.target.value)}
-              placeholder="답변 요지를 적어 주세요. AI가 이어서 더 깊은 질문을 만듭니다."
-              className="flex-1 min-h-0 w-full bg-[hsl(222,47%,10%)] border border-white/10 rounded-xl p-3 text-white text-sm resize-none focus:outline-none focus:border-[hsl(var(--accent))]"
-            />
-          </div>
         </div>
 
         {/* Right 30% */}
@@ -2021,6 +2068,7 @@ function ResultScreen({
 }) {
   const overallScore = result?.overall ?? 0;
   const hasData = !!result && result.scores.length > 0;
+  const invalidReason = result?.invalidReason;
   const grade =
     overallScore >= 80
       ? "우수한 성과입니다!"
@@ -2041,7 +2089,7 @@ function ResultScreen({
           <span className="text-white font-bold text-lg">InterviewAI</span>
         </div>
         <span className="text-white/80 text-sm font-medium">
-          {abandoned ? "면접 중단" : "면접 결과 리포트"}
+          {invalidReason ? "평가 무효" : abandoned ? "면접 중단" : "면접 결과 리포트"}
         </span>
         <button
           data-testid="button-restart"
@@ -2053,7 +2101,38 @@ function ResultScreen({
       </nav>
 
       <div className="flex-1 max-w-5xl mx-auto w-full px-6 py-10">
-        {abandoned ? (
+        {invalidReason ? (
+          <div className="flex flex-col items-center justify-center min-h-[60vh] text-center screen-enter">
+            <div className="w-20 h-20 rounded-full bg-orange-100 flex items-center justify-center mb-6 shadow-md">
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#ea580c" strokeWidth="2">
+                <circle cx="12" cy="12" r="10"/>
+                <line x1="12" y1="8" x2="12" y2="12"/>
+                <line x1="12" y1="16" x2="12.01" y2="16"/>
+              </svg>
+            </div>
+            <h2 className="text-3xl md:text-4xl font-bold text-[hsl(var(--primary))] mb-4">평가가 무효 처리되었습니다</h2>
+            <p className="text-lg text-muted-foreground max-w-md mb-2 leading-relaxed">
+              {invalidReason}
+            </p>
+            <p className="text-base text-muted-foreground max-w-md mb-9">
+              이 면접은 점수가 매겨지지 않으며 기록에도 저장되지 않습니다.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={onRestart}
+                className="px-7 py-3.5 text-base border border-[hsl(var(--border))] text-[hsl(var(--primary))] font-semibold rounded-xl hover:bg-[hsl(var(--secondary))] transition-colors"
+              >
+                처음으로
+              </button>
+              <button
+                onClick={onRestart}
+                className="px-7 py-3.5 text-base navy-gradient text-white font-bold rounded-xl shadow hover:shadow-md hover:scale-105 active:scale-100 transition-all duration-150"
+              >
+                다시 도전하기
+              </button>
+            </div>
+          </div>
+        ) : abandoned ? (
           <div className="flex flex-col items-center justify-center min-h-[60vh] text-center screen-enter">
             <div className="w-20 h-20 rounded-full bg-orange-100 flex items-center justify-center mb-6 shadow-md">
               <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#ea580c" strokeWidth="2">

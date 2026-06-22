@@ -13,22 +13,24 @@ class GazeEvalResult:
     feedback: str
 
 
+def _lerp_score(x: float, full: float, zero: float) -> float:
+    # x<=full → 100점, x>=zero → 0점, 사이는 선형 보간(부드러운 감점).
+    if x <= full:
+        return 100.0
+    if x >= zero:
+        return 0.0
+    return 100.0 * (zero - x) / (zero - full)
+
+
 def _score_centered(off: float) -> float:
     # off: 시선이 카메라(정면)에서 벗어난 정도(0=정면). 작을수록 좋다.
-    if off <= 0.15:
-        return 100.0
-    if off <= 0.30:
-        return 70.0
-    return 40.0
+    # 블렌드셰이프 노이즈로 정면에서도 off 가 0 이 아니므로 ~0.22 까지는 만점으로 본다.
+    return _lerp_score(off, full=0.22, zero=0.60)
 
 
 def _score_stability(std: float) -> float:
     # std: 세션 동안 시선 방향의 표준편차(흔들림). 작을수록 안정적.
-    if std <= 0.06:
-        return 100.0
-    if std <= 0.12:
-        return 70.0
-    return 40.0
+    return _lerp_score(std, full=0.10, zero=0.30)
 
 
 class GazeEvaluator:
@@ -95,7 +97,9 @@ class GazeEvaluator:
         head_yaw = min(1.0, head_yaw)
 
         # 눈동자 이탈(주) + 고개 회전(보조) 을 합쳐 카메라 이탈도를 만든다.
-        off = 0.7 * (eye_dev * 2.0) + 0.3 * head_yaw  # eye_dev 는 보통 작아서 스케일 보정
+        # eye_dev 는 8개 eyeLook 평균이라 한 방향만 봐도 값이 희석된다 → 1.5배 보정.
+        # (과거 2.0배는 정면 응시에서도 off 가 0.15 임계를 넘겨 70점에 갇히는 원인이었다.)
+        off = 0.7 * (eye_dev * 1.5) + 0.3 * head_yaw
         off = min(1.0, off)
 
         blink = (self._get(blend, "eyeBlinkLeft") + self._get(blend, "eyeBlinkRight")) / 2.0
@@ -127,14 +131,14 @@ class GazeEvaluator:
         total = float(round(0.6 * centered_score + 0.4 * stability_score, 1))
 
         fb: List[str] = []
-        if mean_off > 0.30:
+        if mean_off > 0.45:
             fb.append("시선이 카메라에서 자주 벗어납니다. 화면(면접관)을 정면으로 바라보세요.")
-        elif mean_off > 0.15:
+        elif mean_off > 0.22:
             fb.append("시선이 가끔 한쪽으로 쏠립니다. 카메라 렌즈를 기준으로 응시해보세요.")
 
-        if std > 0.12:
+        if std > 0.20:
             fb.append("시선 흔들림이 큰 편입니다. 답변 중에는 시선을 안정적으로 유지해보세요.")
-        elif std > 0.06:
+        elif std > 0.10:
             fb.append("시선이 조금 분산됩니다. 한 곳을 차분히 응시해보세요.")
 
         if not fb:
