@@ -406,6 +406,12 @@ export default function App() {
   const fmt = (s: number) =>
     `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 
+  // AI 면접관 질문 음성(TTS) 재생 중에는 음성 분석을 일시 정지한다.
+  // 스피커로 나온 질문 음성이 마이크에 다시 잡혀(에코) 발화 음량·단어 수에 섞이는 것을 막는다.
+  const handleSpeakingChange = useCallback((speaking: boolean) => {
+    voiceRef.current?.setPaused(speaking);
+  }, []);
+
   const handleStartClick = () => {
     if (!isLoggedIn) {
       setAuthModal({ mode: "login", onSuccess: () => navigate("prep") });
@@ -609,6 +615,7 @@ export default function App() {
             gazeScore={gazeScore}
             onNext={nextQuestion}
             onEnd={() => endInterview(true)}
+            onSpeakingChange={handleSpeakingChange}
           />
         )}
         {screen === "result" && (
@@ -1713,6 +1720,7 @@ function InterviewScreen({
   gazeScore,
   onNext,
   onEnd,
+  onSpeakingChange,
 }: {
   videoRef: React.RefObject<HTMLVideoElement | null>;
   question: string;
@@ -1727,6 +1735,8 @@ function InterviewScreen({
   gazeScore: number | null;
   onNext: () => void;
   onEnd: () => void;
+  /** AI 면접관 질문 음성(TTS) 재생 여부 변화 → 부모가 음성 분석을 일시 정지/재개한다. */
+  onSpeakingChange: (speaking: boolean) => void;
 }) {
   const isLast = questionIndex === totalQuestions - 1;
 
@@ -1784,6 +1794,16 @@ function InterviewScreen({
     playQuestion(question);
     return () => stopSpeaking();
   }, [question, busy, muted, playQuestion, stopSpeaking]);
+
+  // 질문 음성 재생 상태를 부모로 올려 음성 분석을 게이트한다.
+  // (재생 중이면 분석 일시정지 → 질문 음성이 점수에 섞이지 않게.)
+  // 언마운트 시에는 분석이 멈춰있지 않도록 false 로 되돌린다.
+  useEffect(() => {
+    onSpeakingChange(speaking);
+  }, [speaking, onSpeakingChange]);
+  useEffect(() => {
+    return () => onSpeakingChange(false);
+  }, [onSpeakingChange]);
 
   const replayQuestion = () => {
     if (!muted && question) playQuestion(question);

@@ -4,6 +4,8 @@ web/auth.py — 회원가입 / 로그인 / 로그아웃 API (세션 기반 인�
 비밀번호는 해시로 저장하고, 로그인 상태는 Flask 세션 쿠키로 관리한다.
 SPA(React)가 같은 서버에서 서빙되므로 쿠키가 자동으로 전달된다.
 """
+from functools import wraps
+
 from flask import Blueprint, request, jsonify, session
 
 from models import db, User
@@ -19,6 +21,21 @@ def current_user():
     return db.session.get(User, uid)
 
 
+def login_required(view):
+    """로그인 세션이 없으면 401 로 막는 데코레이터.
+
+    OpenAI 등 비용이 드는 API 를 비로그인 사용자가 호출해 요금을 유발하는 것을
+    차단하기 위해 사용한다.
+    """
+    @wraps(view)
+    def wrapper(*args, **kwargs):
+        if current_user() is None:
+            return jsonify({"ok": False, "msg": "로그인이 필요합니다."}), 401
+        return view(*args, **kwargs)
+
+    return wrapper
+
+
 @auth_bp.post("/api/auth/signup")
 def signup():
     data = request.get_json(silent=True) or {}
@@ -28,8 +45,9 @@ def signup():
 
     if not email or not password or not name:
         return jsonify({"ok": False, "msg": "이름·이메일·비밀번호를 모두 입력해 주세요."}), 400
-    if len(password) < 4:
-        return jsonify({"ok": False, "msg": "비밀번호는 4자 이상이어야 합니다."}), 400
+    # 비밀번호 8자 이상 — 자동화된 무차별 가입/취약 계정으로 인한 OpenAI 남용을 줄인다.
+    if len(password) < 8:
+        return jsonify({"ok": False, "msg": "비밀번호는 8자 이상이어야 합니다."}), 400
     if len(email) > 255 or len(name) > 100:
         return jsonify({"ok": False, "msg": "이름 또는 이메일이 너무 깁니다."}), 400
     if User.query.filter_by(email=email).first():

@@ -11,6 +11,8 @@ web/tts.py — OpenAI TTS 음성 합성 API
 from flask import Blueprint, request, jsonify, Response
 
 from modules.question.question_module import client  # 이미 만들어 둔 OpenAI 클라이언트 재사용
+from auth import login_required, current_user
+from usage import enforce_daily_quota
 
 tts_bp = Blueprint("tts", __name__)
 
@@ -21,6 +23,7 @@ ALLOWED_VOICES = {"alloy", "echo", "fable", "onyx", "nova", "shimmer"}
 
 
 @tts_bp.post("/api/tts")
+@login_required
 def synthesize():
     """JSON: { text, voice? } → audio/mpeg(mp3) 바이너리."""
     data = request.get_json(silent=True) or {}
@@ -31,6 +34,11 @@ def synthesize():
     if client is None:
         # OPENAI_API_KEY 미설정 → 프론트가 브라우저 TTS 로 폴백한다.
         return jsonify({"ok": False, "msg": "OPENAI_API_KEY 가 설정되지 않았습니다."}), 503
+
+    # 계정별 일일 쿼터: 비용 드는 OpenAI 호출 직전에 카운트(빈 text 400 은 차감 안 함).
+    allowed, quota_msg = enforce_daily_quota(current_user().id, "tts")
+    if not allowed:
+        return jsonify({"ok": False, "msg": quota_msg}), 429
 
     text = text[:MAX_TTS_CHARS]
     voice = (data.get("voice") or DEFAULT_VOICE)

@@ -15,6 +15,8 @@ from datetime import timedelta
 
 from flask import Flask, request, jsonify, send_from_directory
 from werkzeug.middleware.proxy_fix import ProxyFix
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 # 프로젝트 루트(상위 폴더)를 import 경로에 추가 → modules 패키지 사용
 WEB_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -36,13 +38,18 @@ from modules.question.question_module import (
     build_cover_letter_text,
     COVER_LETTER_SECTIONS,
     COVER_LETTER_GUIDANCE,
+    SINCERITY_REJECT_THRESHOLD,
+    SINCERITY_WARN_THRESHOLD,
 )
+from modules.question.content_filter import check_cover_letter, detect_injection
 from models import db, ensure_database, database_url
-from auth import auth_bp
+from auth import auth_bp, login_required, current_user
+from usage import enforce_daily_quota
 from records import records_bp
 from pose import pose_bp
 from face import face_bp
 from voice import voice_bp
+from tts import tts_bp
 
 app = Flask(__name__, static_folder=None)
 # Cloudflare/nginx 리버스 프록시 뒤에 있으므로, 원래 요청이 HTTPS였음을
@@ -51,6 +58,25 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
 # 요청 본문 용량 제한 (1MB) — 자기소개서 텍스트만 받으므로 작게 잡는다
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
+
+# ===============================
+# 레이트 리미팅 (Flask-Limiter)
+#   누구나 호출 가능한 OpenAI API 가 반복 호출되어 요금이 폭증하거나
+#   서버가 과부하되는 것을 코드 레벨에서 방어한다.
+#   ProxyFix 가 X-Forwarded-For 를 처리하므로 get_remote_address 가
+#   Cloudflare/nginx 너머의 '실제 클라이언트 IP' 를 반환한다.
+#   (없으면 모든 요청이 프록시 IP 하나로 묶여 전체가 함께 차단되니 주의)
+# ===============================
+limiter = Limiter(
+    key_func=get_remote_address,
+    app=app,
+    # 전역 기본 한도: 명시적으로 지정하지 않은 모든 엔드포인트에 적용.
+    default_limits=["300 per hour", "60 per minute"],
+    # 운영에서 다중 워커를 쓰면 메모리 저장소는 워커마다 별도 카운트가 되어
+    # 한도가 느슨해진다. Redis 가 있으면 RATE_LIMIT_STORAGE_URI 로 교체 권장.
+    storage_uri=os.getenv("RATE_LIMIT_STORAGE_URI", "memory://"),
+    strategy="fixed-window",
+)
 
 # ===============================
 # 데이터베이스 / 세션 설정
@@ -80,6 +106,27 @@ app.register_blueprint(records_bp)
 app.register_blueprint(pose_bp)
 app.register_blueprint(face_bp)
 app.register_blueprint(voice_bp)
+app.register_blueprint(tts_bp)
+
+# TTS 는 면접 질문마다 호출되지만 1회당 비용이 작다. 블루프린트 전체에
+# 시간당·분당 상한을 걸어 비정상적 대량 호출만 막는다(정상 면접엔 영향 없음).
+limiter.limit("120 per hour; 20 per minute")(tts_bp)
+
+# 회원가입 IP 레이트리미트: 봇이 계정을 양산해 @login_required 를 우회하고
+# OpenAI 엔드포인트를 남용하는 것을 막는다. 정상 가입은 IP당 시간당 5건이면 충분.
+# (auth_bp 는 limiter 생성 전에 등록되므로, view 함수에 직접 한도를 건다.)
+limiter.limit("5 per hour; 3 per minute")(
+    app.view_functions["auth.signup"]
+)
+
+
+# 레이트리미트 초과(429) 시 SPA 가 처리하기 쉽도록 JSON 으로 응답한다.
+@app.errorhandler(429)
+def ratelimit_handler(e):
+    return jsonify({
+        "ok": False,
+        "msg": "요청이 너무 잦습니다. 잠시 후 다시 시도해 주세요.",
+    }), 429
 
 
 # ===============================
@@ -116,6 +163,8 @@ def static_files(path):
 MAX_SECTION_CHARS = 2000
 
 @app.route("/api/cover-letter", methods=["POST"])
+@login_required
+@limiter.limit("10 per hour; 3 per minute")
 def api_cover_letter():
     data = request.get_json(silent=True) or {}
     topic = (data.get("topic") or "면접").strip()
@@ -127,17 +176,50 @@ def api_cover_letter():
         if len(val) > MAX_SECTION_CHARS:
             return jsonify({"ok": False, "msg": f"'{sec['label']}' 항목은 {MAX_SECTION_CHARS}자 이내로 작성해 주세요."}), 400
 
+    # 적절성 1차 필터(룰 기반): 부정적/장난스러운(무성의) 입력을 GPT 분석 전에 차단.
+    # 욕설·키보드 난타·자모 도배·무성의 단답·극단적 길이 미달 등을 잡는다.
+    filtered = check_cover_letter(sections, COVER_LETTER_SECTIONS)
+    if not filtered["ok"]:
+        return jsonify({"ok": False, "msg": filtered["msg"]}), 400
+
     text = build_cover_letter_text(sections)
     if not text:
         return jsonify({"ok": False, "msg": "자기소개서 내용을 한 항목 이상 작성해 주세요."}), 400
 
+    # 계정별 일일 쿼터: 실제 OpenAI 호출 직전에만 카운트한다(검증 실패는 차감 안 함).
+    allowed, msg = enforce_daily_quota(current_user().id, "cover_letter")
+    if not allowed:
+        return jsonify({"ok": False, "msg": msg}), 429
+
     analysis = analyze_resume(text, topic=topic, guidance=COVER_LETTER_GUIDANCE)
+
+    # 의미적 적절성(진정성) 분기 — 룰로 못 잡는 '돈 벌려고 대충' 류를 LLM 점수로 처리.
+    sincerity = analysis.get("sincerity", 1.0)
+    guidance = COVER_LETTER_GUIDANCE
+
+    # (1) 명백히 불성실/장난 → 차단하고 다시 작성 요청
+    if sincerity < SINCERITY_REJECT_THRESHOLD:
+        return jsonify({
+            "ok": False,
+            "msg": "자기소개서가 면접에 진지하게 임하는 내용으로 보이지 않아요. "
+                   "지원 동기와 강점을 성의 있게 작성해 주세요.",
+        }), 400
+
+    # (2) 다소 성의 부족 → 차단하지 않고 진행하되, 이후 질문 생성 시
+    #     면접관이 진정성을 확인하는 압박 질문을 하도록 guidance 를 보강한다.
+    if sincerity < SINCERITY_WARN_THRESHOLD:
+        guidance = (
+            guidance
+            + "\n[주의] 지원자의 자기소개서가 다소 형식적이거나 성의가 부족하다. "
+              "지원 동기의 진정성과 구체성을 확인하는 압박 질문을 적절히 섞어라."
+        )
 
     return jsonify(
         {
             "ok": True,
             "resume_text": text,
-            "guidance": COVER_LETTER_GUIDANCE,
+            # 보강된 guidance 를 내려보내, 다음 질문(/api/question)에서도 이어지게 한다.
+            "guidance": guidance,
             "summary": analysis["summary"],
             "first_question": analysis["first_question"],
         }
@@ -148,14 +230,31 @@ def api_cover_letter():
 # API: 다음 질문 생성
 #   JSON: { answer_text, topic, previous_questions, resume_context, guidance }
 # ===============================
+MAX_ANSWER_CHARS = 4000  # 답변 1개 길이 상한 (GPT 토큰 비용·악용 방지)
+
 @app.route("/api/question", methods=["POST"])
+@login_required
+@limiter.limit("60 per hour; 12 per minute")
 def api_question():
     data = request.get_json(silent=True) or {}
-    answer_text = (data.get("answer_text") or "").strip()
+    answer_text = (data.get("answer_text") or "").strip()[:MAX_ANSWER_CHARS]
     topic = (data.get("topic") or "면접").strip()
     previous_questions = data.get("previous_questions") or []
     resume_context = data.get("resume_context") or ""
     guidance = data.get("guidance") or ""
+
+    # 프롬프트 인젝션 차단: 답변에 "면접관 AI"를 향한 지시("이전 지시 무시…", 번역/코드
+    # 요청 등)를 심어 면접 시스템을 범용 챗봇처럼 악용하는 시도를 GPT 호출 전에 막는다.
+    if detect_injection(answer_text):
+        return jsonify({
+            "ok": False,
+            "msg": "답변에 면접과 무관한 명령/지시문이 포함되어 있어요. 면접 답변만 입력해 주세요.",
+        }), 400
+
+    # 계정별 일일 쿼터: /api/question 은 사실상 GPT 프록시가 될 수 있어 가장 남용되기 쉽다.
+    allowed, msg = enforce_daily_quota(current_user().id, "question")
+    if not allowed:
+        return jsonify({"ok": False, "msg": msg}), 429
 
     try:
         question = make_question(

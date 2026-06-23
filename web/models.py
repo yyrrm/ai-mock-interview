@@ -87,6 +87,30 @@ class User(db.Model):
         return {"id": self.id, "email": self.email, "name": self.name}
 
 
+class DailyUsage(db.Model):
+    """사용자 1명이 'OpenAI 비용이 드는 작업'을 하루에 몇 번 했는지 센다.
+
+    OpenAI 요금 폭탄(가입 후 엔드포인트를 챗봇처럼 남용)을 계정 단위로 막기
+    위한 일일 쿼터 카운터다. (user_id, day, kind) 한 행이 그날의 횟수를 담는다.
+    day 는 UTC 날짜 문자열('YYYY-MM-DD'), kind 는 'question'/'cover_letter'/'tts'.
+    """
+
+    __tablename__ = "daily_usage"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    day = db.Column(db.String(10), nullable=False)   # 'YYYY-MM-DD' (UTC)
+    kind = db.Column(db.String(20), nullable=False)  # question / cover_letter / tts
+    count = db.Column(db.Integer, nullable=False, default=0)
+
+    # (user, day, kind) 조합은 유일 — 같은 행을 원자적으로 증가시키기 위함
+    __table_args__ = (
+        db.UniqueConstraint("user_id", "day", "kind", name="uq_usage_user_day_kind"),
+    )
+
+
 class InterviewRecord(db.Model):
     """완료한 면접 1회의 결과 기록 (회원과 외래키로 연결)."""
 

@@ -23,6 +23,12 @@ export type VoiceAnalyzerHandle = {
   stop: (opts?: { fallbackText?: string }) => Promise<VoiceSummary>;
   /** 마지막 호출 이후 인식된 답변 텍스트를 돌려주고 버퍼를 비운다(다음 질문 생성용). STT 미지원 시 "". */
   takeTranscript: () => string;
+  /**
+   * AI 면접관 질문 음성(TTS)이 재생되는 동안 분석을 일시 정지한다.
+   * paused 동안에는 음량 샘플을 누적하지 않고 STT 도 멈춰, 스피커로 나온 질문 음성이
+   * 마이크에 다시 잡혀(에코) 발화 음량/단어 수에 섞이는 것을 막는다.
+   */
+  setPaused: (paused: boolean) => void;
 };
 
 type SpeechRecognitionish = {
@@ -38,6 +44,7 @@ type SpeechRecognitionish = {
 
 export function startVoiceAnalyzer(stream: MediaStream): VoiceAnalyzerHandle {
   let running = true;
+  let paused = false; // TTS 질문 음성 재생 중에는 true → 샘플/STT 누적 중단
   const startedAt = performance.now();
 
   // ── Web Audio: 음량/침묵 ─────────────────────────────
@@ -63,7 +70,7 @@ export function startVoiceAnalyzer(stream: MediaStream): VoiceAnalyzerHandle {
     buf = new Float32Array(new ArrayBuffer(analyser.fftSize * 4));
 
     sampleTimer = window.setInterval(() => {
-      if (!running || !analyser || !buf) return;
+      if (!running || paused || !analyser || !buf) return; // 질문 음성 재생 중(paused)에는 음량 누적 안 함
       analyser.getFloatTimeDomainData(buf);
       let sum = 0;
       for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
@@ -108,8 +115,9 @@ export function startVoiceAnalyzer(stream: MediaStream): VoiceAnalyzerHandle {
       };
       recog.onerror = () => {};
       // Chrome 은 일정 침묵 후 자동 종료 → 면접 동안 계속 재시작
+      // (단, paused 중에는 재시작하지 않는다 — setPaused(false) 에서 다시 켠다.)
       recog.onend = () => {
-        if (running && recog) {
+        if (running && !paused && recog) {
           try {
             recog.start();
           } catch {
@@ -124,6 +132,29 @@ export function startVoiceAnalyzer(stream: MediaStream): VoiceAnalyzerHandle {
   }
 
   return {
+    setPaused(next: boolean) {
+      if (next === paused) return;
+      paused = next;
+      // 침묵 카운터를 끊어 paused 경계가 한 침묵 구간으로 합쳐지지 않게 한다.
+      if (silenceRun >= MIN_SILENCE_FRAMES) silenceSegments++;
+      silenceRun = 0;
+      if (!recog) return;
+      if (paused) {
+        // STT 정지. onend 가 paused 를 보고 자동 재시작하지 않는다.
+        try {
+          recog.stop();
+        } catch {
+          /* ignore */
+        }
+      } else if (running) {
+        // 재개: STT 다시 시작 (onend 가 죽어있을 수 있으므로 명시적으로 start)
+        try {
+          recog.start();
+        } catch {
+          /* 아직 종료 전이라 이미 시작됨 → onend 에서 재시작됨 */
+        }
+      }
+    },
     takeTranscript() {
       const fresh = transcript.slice(takenLen).trim();
       takenLen = transcript.length;
