@@ -1032,9 +1032,9 @@ function HomeScreen({
             </span>
           </div>
 
-          <h1 className="text-4xl md:text-5xl font-bold text-[hsl(var(--primary))] leading-[1.3] tracking-tight mb-5">
-            <span className="block">막연한 연습은 그만,</span>
-            <span className="block">
+          <h1 className="text-2xl sm:text-3xl md:text-5xl font-bold text-[hsl(var(--primary))] leading-[1.3] tracking-tight mb-5 break-keep">
+            <span className="block whitespace-nowrap">막연한 연습은 그만,</span>
+            <span className="block whitespace-nowrap">
               구체적인 피드백으로 <span className="text-[hsl(var(--accent))]">합격</span>에 가까워지세요
             </span>
           </h1>
@@ -2446,6 +2446,14 @@ function AuthModal({
   const handleSubmit = async () => {
     if (!email || !password) { setError("이메일과 비밀번호를 입력해 주세요."); return; }
     if (tab === "signup" && !name) { setError("이름을 입력해 주세요."); return; }
+    // 비밀번호 정책(서버와 동일): 9자 이상 + 대문자 + 소문자 + 특수기호.
+    if (
+      tab === "signup" &&
+      !(password.length >= 9 && /[A-Z]/.test(password) && /[a-z]/.test(password) && /[^A-Za-z0-9]/.test(password))
+    ) {
+      setError("비밀번호는 9자 이상이며 대문자·소문자·특수기호를 모두 포함해야 합니다.");
+      return;
+    }
     if (tab === "signup" && (!agreeTerms || !agreePrivacy)) {
       setError("이용약관과 개인정보 수집·이용에 모두 동의해 주세요.");
       return;
@@ -2548,6 +2556,12 @@ function AuthModal({
             onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
             className="w-full px-4 py-3 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--background))] text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--accent))]"
           />
+
+          {tab === "signup" && (
+            <p className="text-xs text-muted-foreground -mt-1">
+              비밀번호는 9자 이상이며 대문자·소문자·특수기호를 모두 포함해야 합니다.
+            </p>
+          )}
 
           {tab === "signup" && (
             <div className="flex flex-col gap-2 mt-1">

@@ -4,6 +4,7 @@ web/auth.py — 회원가입 / 로그인 / 로그아웃 API (세션 기반 인�
 비밀번호는 해시로 저장하고, 로그인 상태는 Flask 세션 쿠키로 관리한다.
 SPA(React)가 같은 서버에서 서빙되므로 쿠키가 자동으로 전달된다.
 """
+import re
 from functools import wraps
 
 from flask import Blueprint, request, jsonify, session
@@ -11,6 +12,27 @@ from flask import Blueprint, request, jsonify, session
 from models import db, User
 
 auth_bp = Blueprint("auth", __name__)
+
+# 비밀번호 정책: 9자 이상 + 대문자 + 소문자 + 특수기호 포함.
+# 자동화된 무차별 가입/취약 계정으로 인한 OpenAI 남용을 줄이기 위한 최소 복잡도.
+PASSWORD_MIN_LEN = 9
+_PW_UPPER = re.compile(r"[A-Z]")
+_PW_LOWER = re.compile(r"[a-z]")
+_PW_SPECIAL = re.compile(r"[^A-Za-z0-9]")  # 영문·숫자가 아닌 모든 문자를 특수기호로 본다
+_PW_POLICY_MSG = "비밀번호는 9자 이상이며 대문자·소문자·특수기호를 모두 포함해야 합니다."
+
+
+def validate_password(password):
+    """비밀번호가 정책을 만족하면 None, 아니면 사용자 안내 문구를 반환한다."""
+    if len(password) < PASSWORD_MIN_LEN:
+        return _PW_POLICY_MSG
+    if not _PW_UPPER.search(password):
+        return _PW_POLICY_MSG
+    if not _PW_LOWER.search(password):
+        return _PW_POLICY_MSG
+    if not _PW_SPECIAL.search(password):
+        return _PW_POLICY_MSG
+    return None
 
 
 def current_user():
@@ -45,9 +67,9 @@ def signup():
 
     if not email or not password or not name:
         return jsonify({"ok": False, "msg": "이름·이메일·비밀번호를 모두 입력해 주세요."}), 400
-    # 비밀번호 8자 이상 — 자동화된 무차별 가입/취약 계정으로 인한 OpenAI 남용을 줄인다.
-    if len(password) < 8:
-        return jsonify({"ok": False, "msg": "비밀번호는 8자 이상이어야 합니다."}), 400
+    pw_err = validate_password(password)
+    if pw_err:
+        return jsonify({"ok": False, "msg": pw_err}), 400
     if len(email) > 255 or len(name) > 100:
         return jsonify({"ok": False, "msg": "이름 또는 이메일이 너무 깁니다."}), 400
     if User.query.filter_by(email=email).first():
