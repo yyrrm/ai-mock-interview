@@ -806,8 +806,8 @@ function AnalysisShowcase() {
       <div className="max-w-4xl mx-auto text-center">
         <p className="text-sm font-bold text-[hsl(var(--accent))] uppercase tracking-widest mb-3">실시간 분석</p>
         <h2 className="text-3xl md:text-4xl font-bold text-[hsl(var(--primary))] mb-3">실시간으로 이렇게 분석됩니다</h2>
-        <p className="text-base text-muted-foreground max-w-xl mx-auto leading-relaxed text-balance mb-10">
-          면접 중 표정·시선·자세·음성이 0~100점으로 실시간 채점됩니다.
+        <p className="text-base text-muted-foreground max-w-xl mx-auto leading-relaxed mb-10">
+          면접 중 <span className="whitespace-nowrap">표정·시선·자세·음성</span>이 <span className="whitespace-nowrap">0~100점으로</span> 실시간 채점됩니다.
         </p>
         <div ref={ref} className="navy-card rounded-2xl p-8 flex flex-wrap items-center justify-center gap-8">
           {SHOWCASE_RINGS.map((r) => (
@@ -839,8 +839,9 @@ function ResultShowcase() {
         <div className="text-center mb-10">
           <p className="text-sm font-bold text-[hsl(var(--accent))] uppercase tracking-widest mb-3">결과 리포트</p>
           <h2 className="text-3xl md:text-4xl font-bold text-[hsl(var(--primary))] mb-3">면접이 끝나면 이런 리포트를 받습니다</h2>
-          <p className="text-base text-muted-foreground max-w-xl mx-auto leading-relaxed text-balance">
-            종합 점수와 영역별 점수, 세부 지표, AI 피드백까지 한눈에 확인하세요.
+          <p className="text-base text-muted-foreground max-w-xl mx-auto leading-relaxed">
+            <span className="md:whitespace-nowrap">종합 점수와 영역별 점수, 세부 지표,</span>{" "}
+            <span className="md:whitespace-nowrap">AI 피드백까지 한눈에 확인하세요.</span>
           </p>
         </div>
 
@@ -1077,8 +1078,9 @@ function HomeScreen({
             <h2 className="text-3xl md:text-4xl font-bold text-[hsl(var(--primary))] mb-3">
               합격을 만드는 5가지 핵심 엔진
             </h2>
-            <p className="text-base text-muted-foreground max-w-xl mx-auto leading-relaxed text-balance">
-              <span className="whitespace-nowrap">시선·표정·음성·자세</span> 실시간 분석부터 자기소개서 맞춤 질문까지, AI가 함께합니다.
+            <p className="text-base text-muted-foreground max-w-xl mx-auto leading-relaxed">
+              <span className="md:whitespace-nowrap"><span className="whitespace-nowrap">시선·표정·음성·자세</span> 실시간 분석부터</span>{" "}
+              <span className="md:whitespace-nowrap">자기소개서 맞춤 질문까지, AI가 함께합니다.</span>
             </p>
           </div>
 
