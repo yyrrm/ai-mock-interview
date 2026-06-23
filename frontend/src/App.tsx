@@ -1200,7 +1200,7 @@ function HomeScreen({
                 <div className="relative aspect-[2/1] overflow-hidden">{f.art}</div>
                 <div className="p-7">
                   <h3 className="font-bold text-[hsl(var(--primary))] mb-2.5 text-xl">{f.title}</h3>
-                  <p className="text-sm text-muted-foreground leading-relaxed text-balance">{f.desc}</p>
+                  <p className="text-sm text-muted-foreground leading-relaxed break-keep">{f.desc}</p>
                 </div>
               </div>
             ))}
@@ -1230,7 +1230,7 @@ function HomeScreen({
               </div>
               <div className="p-7">
                 <h3 className="font-bold text-[hsl(var(--primary))] mb-2.5 text-xl">자기소개서 맞춤 질문</h3>
-                <p className="text-sm text-muted-foreground leading-relaxed text-balance">
+                <p className="text-sm text-muted-foreground leading-relaxed break-keep">
                   면접을 시작하면 먼저 자기소개서를 작성합니다. AI가 그 내용을 분석해 나에게 꼭 맞는 첫 질문을 만들고, 내 답변에 따라 꼬리 질문을 이어서 던집니다.
                 </p>
               </div>
