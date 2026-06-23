@@ -16,6 +16,7 @@ import numpy as np
 from flask import Blueprint, request, jsonify
 
 from modules.evaluation.pose_evaluator import PoseEvaluator
+from auth import login_required
 
 pose_bp = Blueprint("pose", __name__)
 
@@ -66,6 +67,7 @@ def _coords_from_landmarks(landmarks):
 
 
 @pose_bp.post("/api/analyze/pose")
+@login_required
 def analyze_pose():
     """프레임 배치를 받아 순서대로 평가하고, 마지막 프레임 기준 점수를 반환한다.
 
@@ -114,6 +116,7 @@ def analyze_pose():
 
 
 @pose_bp.post("/api/analyze/pose/end")
+@login_required
 def analyze_pose_end():
     """세션 동안 누적한 점수의 평균 + 최종 피드백을 반환하고 세션을 정리한다."""
     data = request.get_json(silent=True) or {}

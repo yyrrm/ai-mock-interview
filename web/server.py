@@ -119,6 +119,13 @@ limiter.limit("5 per hour; 3 per minute")(
     app.view_functions["auth.signup"]
 )
 
+# 실시간 분석(자세·표정/시선·음성) 블루프린트: OpenAI 비용은 들지 않지만,
+# 비정상적 대량 호출이 서버 CPU/메모리(세션 누적)를 고갈시키는 부하 공격을 막는다.
+# 정상 면접은 프레임을 배치로 보내 분당 호출이 많으므로 분당 한도는 넉넉히 잡되,
+# 폭주(무한 루프 호출)만 시간당 한도로 끊는다. (@login_required 와 이중 방어)
+for _bp in (pose_bp, face_bp, voice_bp):
+    limiter.limit("600 per hour; 60 per minute")(_bp)
+
 
 # 레이트리미트 초과(429) 시 SPA 가 처리하기 쉽도록 JSON 으로 응답한다.
 @app.errorhandler(429)

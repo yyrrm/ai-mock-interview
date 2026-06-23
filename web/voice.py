@@ -11,6 +11,7 @@ Web Speech API 로 단어 수·인식 신뢰도까지) 한 번에 보낸다. 서
 from flask import Blueprint, request, jsonify
 
 from modules.evaluation.voice_evaluator import VoiceEvaluator
+from auth import login_required
 
 voice_bp = Blueprint("voice", __name__)
 
@@ -25,6 +26,7 @@ def _num(data, key, default=None):
 
 
 @voice_bp.post("/api/analyze/voice/end")
+@login_required
 def analyze_voice_end():
     """브라우저가 모은 음성 지표로 발화 점수를 계산한다.
 

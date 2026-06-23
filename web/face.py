@@ -16,6 +16,7 @@ from flask import Blueprint, request, jsonify
 
 from modules.evaluation.expression_evaluator import ExpressionEvaluator
 from modules.evaluation.gaze_evaluator import GazeEvaluator
+from auth import login_required
 
 face_bp = Blueprint("face", __name__)
 
@@ -60,6 +61,7 @@ def _clean_blend(blend):
 
 
 @face_bp.post("/api/analyze/face")
+@login_required
 def analyze_face():
     """표정·시선 프레임 배치를 받아 평가하고 마지막 프레임 점수를 반환한다.
 
@@ -105,6 +107,7 @@ def analyze_face():
 
 
 @face_bp.post("/api/analyze/face/end")
+@login_required
 def analyze_face_end():
     """세션 동안 누적한 표정·시선 평균 점수 + 피드백을 반환하고 세션을 정리한다."""
     data = request.get_json(silent=True) or {}
