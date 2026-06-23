@@ -1024,13 +1024,16 @@ function HomeScreen({
             </span>
           </div>
 
-          <h1 className="text-4xl md:text-5xl font-bold text-[hsl(var(--primary))] leading-[1.25] tracking-tight mb-5 text-balance">
-            막연한 연습은 그만, 구체적인 피드백으로 <span className="text-[hsl(var(--accent))]">합격</span>에 가까워지세요
+          <h1 className="text-4xl md:text-5xl font-bold text-[hsl(var(--primary))] leading-[1.3] tracking-tight mb-5">
+            <span className="block">막연한 연습은 그만,</span>
+            <span className="block">
+              구체적인 피드백으로 <span className="text-[hsl(var(--accent))]">합격</span>에 가까워지세요
+            </span>
           </h1>
 
-          <p className="text-base md:text-lg text-muted-foreground leading-relaxed mb-9 max-w-2xl text-balance">
-            내 자기소개서로 만든 맞춤 질문과 꼬리 질문으로 실전처럼 연습하고,{" "}
-            <span className="whitespace-nowrap">시선·표정·음성·자세</span> 분석 리포트까지 받아보세요.
+          <p className="text-base md:text-lg text-muted-foreground leading-relaxed mb-9 max-w-2xl">
+            <span className="md:whitespace-nowrap">내 자기소개서로 만든 맞춤 질문과 꼬리 질문으로 실전처럼 연습하고,</span>{" "}
+            <span className="md:whitespace-nowrap"><span className="whitespace-nowrap">시선·표정·음성·자세</span> 분석 리포트까지 받아보세요.</span>
           </p>
 
           <button
