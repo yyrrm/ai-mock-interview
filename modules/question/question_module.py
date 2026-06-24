@@ -1,14 +1,64 @@
 from dotenv import load_dotenv
 import os
 import json
+import subprocess
 from openai import OpenAI
 
 # .env 파일 로드
 load_dotenv()
 
 # OpenAI 클라이언트 생성 (API 키가 없으면 None → 폴백 모드로 동작)
+# 주의: 이 client 는 web/tts.py 가 import 해 TTS 용으로 재사용한다(제거 금지).
+# 질문 생성(analyze_resume/make_question)은 아래 Claude CLI 로 돌리지만,
+# TTS 는 계속 OpenAI 이므로 client 정의는 그대로 둔다.
 _api_key = os.getenv("OPENAI_API_KEY")
 client = OpenAI(api_key=_api_key) if _api_key else None
+
+# ── 질문 생성 백엔드: OpenAI API → 로컬 Claude Code CLI(구독형) ─────────────
+# 비용이 드는 OpenAI 대신 이미 로그인된 Claude 구독을 subprocess 로 호출한다.
+# 경로는 운영서버(Linux) 기준. 다른 PC면 `which claude` 로 확인해 교체.
+CLAUDE_BIN = "/home/ku/.local/bin/claude"
+CLAUDE_HOME = "/home/ku"   # Claude 로그인 자격증명이 있는 홈 디렉터리
+
+
+def _claude_available():
+    """Claude CLI 로 질문 생성이 가능한지. 불가하면 폴백으로 동작."""
+    return os.path.exists(CLAUDE_BIN)
+
+
+def _run_claude(prompt, json_mode):
+    """Claude CLI 를 1회 실행. json_mode=True 면 result 안의 JSON(dict) 반환,
+    아니면 평문(str) 반환. 실패 시 예외를 올린다(호출부에서 폴백 처리)."""
+    fmt = "json" if json_mode else "text"
+    env = dict(os.environ, MAX_THINKING_TOKENS="0", HOME=CLAUDE_HOME)
+    proc = subprocess.run(
+        [CLAUDE_BIN, "-p", prompt,
+         "--output-format", fmt, "--model", "haiku",
+         "--setting-sources", "project,local"],
+        capture_output=True, text=True, env=env,
+        cwd="/tmp", timeout=60, stdin=subprocess.DEVNULL,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"claude exited {proc.returncode}: {proc.stderr[:200]}")
+    if not json_mode:
+        out = proc.stdout.strip()
+        if not out:                                   # 빈 응답은 실패로 → 호출부 폴백
+            raise RuntimeError("claude returned empty text")
+        return out
+    wrapper = json.loads(proc.stdout)                 # 래퍼 JSON (없으면 JSONDecodeError → 폴백)
+    result_text = wrapper.get("result")               # 모델 답변. 오류 시 result 키가 없을 수 있음
+    if not result_text:
+        raise RuntimeError(f"claude no result: {str(wrapper)[:200]}")
+    return _extract_json(result_text)                 # 그 안의 JSON 라이내기
+
+
+def _extract_json(text):
+    """첫 '{' 부터 '유효한 JSON 객체 1개'만 파싱. 코드펜스(```json)·뒤 잡담 무시."""
+    start = text.find("{")
+    if start == -1:
+        raise ValueError("no JSON object in claude output")
+    obj, _ = json.JSONDecoder().raw_decode(text[start:])
+    return obj
 
 # 이력서 텍스트가 너무 길면 프롬프트 비용/한도 초과 → 앞부분만 사용
 # (자기소개서 4문항 × 2000자 + 라벨까지 담을 수 있도록 넉넉하게 잡는다)
@@ -102,12 +152,12 @@ def analyze_resume(resume_context, topic="면접", guidance=""):
     """
     clipped = _clip_resume(resume_context)
 
-    # API 키가 없거나 이력서 텍스트가 비어 있으면 폴백.
+    # Claude CLI 가 없거나 이력서 텍스트가 비어 있으면 폴백.
     # 판정 불가 상황에서는 통과시킨다(sincerity=1.0) — 데모 모드를 막지 않기 위함.
-    if client is None or not clipped:
+    if not _claude_available() or not clipped:
         return {
-            "summary": "(데모 모드) 이력서를 분석하려면 OPENAI_API_KEY 설정이 필요합니다."
-            if not clipped or client is None
+            "summary": "(데모 모드) 이력서를 분석하려면 Claude CLI 가 필요합니다."
+            if not _claude_available()
             else "이력서를 확인했습니다.",
             "first_question": _FALLBACK_QUESTIONS[0],
             "sincerity": 1.0,
@@ -145,19 +195,12 @@ def analyze_resume(resume_context, topic="면접", guidance=""):
    - sincerity_reason 에 한 문장으로 근거를 적어라.
 
 [출력 형식]
-반드시 아래 JSON 형식으로만 출력 (다른 텍스트 금지):
+반드시 아래 JSON 형식으로만, 한국어로 출력 (코드펜스·설명·다른 텍스트 절대 금지):
 {{"summary": "...", "first_question": "...", "sincerity": 0.0, "sincerity_reason": "..."}}
 """
 
     try:
-        response = client.chat.completions.create(
-            model="gpt-4.1-mini",
-            messages=[{"role": "user", "content": prompt}],
-            # 판정 안정성을 위해 온도를 낮춘다(요약·질문 다양성보다 일관성 우선).
-            temperature=0.3,
-            response_format={"type": "json_object"},
-        )
-        data = json.loads(response.choices[0].message.content)
+        data = _run_claude(prompt, json_mode=True)
         return {
             "summary": data.get("summary", "이력서를 확인했습니다."),
             "first_question": data.get("first_question", _FALLBACK_QUESTIONS[0]),
@@ -202,8 +245,8 @@ def make_question(answer_text, topic="면접", previous_questions=None, resume_c
         resume_context: 지원자 이력서에서 추출한 텍스트(있으면 맞춤형 질문에 활용)
         guidance: 질문 비중 등 추가 지침 (예: 자기소개서 항목별 비중)
     """
-    # API 키가 없으면 폴백: 이미 한 질문과 겹치지 않는 기본 질문을 하나 고른다
-    if client is None:
+    # Claude CLI 가 없으면 폴백: 이미 한 질문과 겹치지 않는 기본 질문을 하나 고른다
+    if not _claude_available():
         asked = set(previous_questions or [])
         for q in _FALLBACK_QUESTIONS:
             if q not in asked:
@@ -250,12 +293,19 @@ def make_question(answer_text, topic="면접", previous_questions=None, resume_c
 [출력 형식]
 - 질문만 출력 (부가 설명 금지)
 - 한 문장에서 두 문장, 너무 길지 않게
+- 오직 JSON 한 줄로(코드펜스·설명·머리말 절대 금지): {{"question":"<면접 질문 한 문장>"}}
 """
 
-    response = client.chat.completions.create(
-        model="gpt-4.1-mini",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.7,
-    )
-
-    return response.choices[0].message.content.strip()
+    try:
+        data = _run_claude(prompt, json_mode=True)
+        q = str(data.get("question", "")).strip()
+        if not q:
+            raise ValueError("empty question")
+        return q
+    except Exception as e:
+        print("질문 생성 오류:", e)
+        asked = set(previous_questions or [])
+        for q in _FALLBACK_QUESTIONS:
+            if q not in asked:
+                return q
+        return _FALLBACK_QUESTIONS[-1]
