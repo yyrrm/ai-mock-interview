@@ -22,12 +22,20 @@ def _score_smile(smile: float) -> float:
 
 
 def _score_tension(tension: float) -> float:
-    # 찡그림(frown)+미간 주름(browDown) 합으로 본 긴장/부정 인상.
-    if tension <= 0.10:
+    # 찡그림(mouthFrown)·미간 내림(browDown)·눈썹 올림(browUp)·눈 찡그림(eyeSquint)
+    # 을 합산한 긴장/부정 인상 점수.
+    # 무표정(tension≈0)이 만점이고, 살짝만 찌푸리거나 눈썹을 올려도 곧바로
+    # 감점되도록 임계값을 낮췄다. (이전엔 0.10 이하가 전부 100점이라 가벼운
+    # 찡그림이 무표정과 같은 점수를 받는 문제가 있었음)
+    if tension <= 0.02:
         return 100.0
+    if tension <= 0.08:
+        return 80.0
+    if tension <= 0.15:
+        return 60.0
     if tension <= 0.25:
-        return 70.0
-    return 40.0
+        return 45.0
+    return 30.0
 
 
 class ExpressionEvaluator:
@@ -36,7 +44,8 @@ class ExpressionEvaluator:
 
     입력: ARKit 스타일 블렌드셰이프 계수 dict ({name: 0~1}).
     - 미소(mouthSmile L/R) 로 자연스러운 표정 여부를,
-    - 찡그림(mouthFrown)·미간(browDown) 으로 긴장/부정 인상을 추정해
+    - 찡그림(mouthFrown)·미간 내림(browDown)·눈썹 올림(browUp)·눈 찡그림(eyeSquint)
+      으로 긴장/부정 인상을 추정해
       0~100 자신감(표정) 점수와 피드백을 만든다.
 
     데스크톱의 py-feat 감정 인식과 1:1 대응은 아니지만, 면접 맥락에서
@@ -79,9 +88,20 @@ class ExpressionEvaluator:
         smile = (self._get(blend, "mouthSmileLeft") + self._get(blend, "mouthSmileRight")) / 2.0
         frown = (self._get(blend, "mouthFrownLeft") + self._get(blend, "mouthFrownRight")) / 2.0
         brow_down = (self._get(blend, "browDownLeft") + self._get(blend, "browDownRight")) / 2.0
+        # 눈썹 올림(놀람·당황 인상): 안쪽/바깥쪽 모두 반영
+        brow_up = (
+            self._get(blend, "browInnerUp")
+            + self._get(blend, "browOuterUpLeft")
+            + self._get(blend, "browOuterUpRight")
+        ) / 3.0
+        # 눈 찡그림(긴장·찌푸림 보조 신호)
+        eye_squint = (self._get(blend, "eyeSquintLeft") + self._get(blend, "eyeSquintRight")) / 2.0
         jaw_open = self._get(blend, "jawOpen")
 
-        tension = frown + 0.7 * brow_down
+        # 무표정에서 벗어나 부정/긴장 인상을 주는 눈썹·입·눈 움직임을 합산.
+        # browDown(미간 내림) 가중치를 높이고, browUp(눈썹 올림)·eyeSquint 도 반영해
+        # "눈썹을 찡그리거나 올려도 점수가 무표정과 같다" 는 문제를 없앤다.
+        tension = frown + brow_down + 0.6 * brow_up + 0.5 * eye_squint
 
         smile_score = _score_smile(smile)
         tension_score = _score_tension(tension)
@@ -115,9 +135,9 @@ class ExpressionEvaluator:
         scores = {"smile": _score_smile(smile), "tension": _score_tension(tension)}
 
         fb: List[str] = []
-        if tension > 0.25:
-            fb.append("표정에 긴장(찡그림·미간 주름)이 자주 보입니다. 미간을 펴고 편안한 표정을 의식해보세요.")
-        elif tension > 0.10:
+        if tension > 0.15:
+            fb.append("표정에 긴장(찡그림·미간 주름·눈썹 움직임)이 자주 보입니다. 미간을 펴고 편안한 표정을 의식해보세요.")
+        elif tension > 0.05:
             fb.append("이따금 긴장한 표정이 비칩니다. 답변 사이에 잠깐 힘을 빼보세요.")
 
         if smile < 0.05:
