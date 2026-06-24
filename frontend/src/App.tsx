@@ -1885,7 +1885,7 @@ function InterviewScreen({
       <div className="flex-1 flex gap-0 overflow-hidden">
         {/* Left 70% */}
         <div className="flex-[7] flex flex-col p-6 gap-5">
-          <div className="flex-[5] min-h-0 rounded-2xl border border-white/10 bg-[hsl(222,47%,12%)] overflow-hidden relative flex flex-col items-center justify-center gap-5 shadow-xl">
+          <div className="order-2 flex-[5] min-h-0 rounded-2xl border border-white/10 bg-[hsl(222,47%,12%)] overflow-y-auto relative flex flex-col items-center justify-center gap-4 py-4 shadow-xl">
             <div
               className="absolute inset-0 opacity-5"
               style={{
@@ -1974,14 +1974,14 @@ function InterviewScreen({
             </div>
           </div>
 
-          <div className="flex-[3] min-h-0 overflow-auto rounded-2xl border border-white/10 bg-[hsl(222,47%,15%)] p-6 shadow-lg">
+          <div className="order-1 flex-[3] min-h-0 overflow-auto rounded-2xl border border-white/10 bg-[hsl(222,47%,15%)] p-6 shadow-lg">
             <div className="flex items-center gap-2 mb-3">
               <div className="w-6 h-6 rounded-lg bg-[hsl(var(--accent))] flex items-center justify-center">
                 <span className="text-white text-xs font-bold">Q</span>
               </div>
-              <span className="text-white/60 text-sm">질문 {questionIndex + 1}</span>
+              <span className="text-white/60 text-base">질문 {questionIndex + 1}</span>
             </div>
-            <p key={questionIndex} className="text-white text-lg leading-relaxed font-medium screen-enter">
+            <p key={questionIndex} className="text-white text-2xl leading-relaxed font-medium screen-enter">
               {busy ? "다음 질문을 생성하는 중입니다..." : question}
             </p>
           </div>
