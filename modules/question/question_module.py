@@ -1,6 +1,7 @@
 from dotenv import load_dotenv
 import os
 import json
+import shutil
 import subprocess
 from openai import OpenAI
 
@@ -16,14 +17,43 @@ client = OpenAI(api_key=_api_key) if _api_key else None
 
 # ── 질문 생성 백엔드: OpenAI API → 로컬 Claude Code CLI(구독형) ─────────────
 # 비용이 드는 OpenAI 대신 이미 로그인된 Claude 구독을 subprocess 로 호출한다.
-# 경로는 운영서버(Linux) 기준. 다른 PC면 `which claude` 로 확인해 교체.
-CLAUDE_BIN = "/home/ku/.local/bin/claude"
-CLAUDE_HOME = "/home/ku"   # Claude 로그인 자격증명이 있는 홈 디렉터리
+#
+# 경로 결정 순서(서버마다 계정/설치 위치가 달라 자동 탐지한다):
+#   1) 환경변수 CLAUDE_BIN 이 있으면 그대로 사용 (서버에서 한 줄로 강제 지정)
+#   2) PATH 에서 `claude` 검색 (shutil.which)
+#   3) 흔한 설치 위치 후보들
+# 어느 것도 못 찾으면 None → _claude_available() 가 False → 폴백 동작.
+def _resolve_claude_bin():
+    override = os.getenv("CLAUDE_BIN")
+    if override and os.path.exists(override):
+        return override
+    found = shutil.which("claude")
+    if found:
+        return found
+    home = os.path.expanduser("~")
+    candidates = [
+        os.path.join(home, ".local", "bin", "claude"),
+        os.path.join(home, ".claude", "local", "claude"),
+        "/usr/local/bin/claude",
+        "/usr/bin/claude",
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return None
+
+
+CLAUDE_BIN = _resolve_claude_bin()
+# Claude 로그인 자격증명이 있는 홈 디렉터리. 보통 현재 계정의 홈이면 된다.
+# 다른 계정으로 로그인했다면 환경변수 CLAUDE_HOME 으로 덮어쓴다.
+CLAUDE_HOME = os.getenv("CLAUDE_HOME") or os.path.expanduser("~")
+# subprocess 실행 디렉터리(프로젝트 CLAUDE.md 등에 끌려가지 않도록 중립 위치).
+_CLAUDE_CWD = "/tmp" if os.path.isdir("/tmp") else CLAUDE_HOME
 
 
 def _claude_available():
     """Claude CLI 로 질문 생성이 가능한지. 불가하면 폴백으로 동작."""
-    return os.path.exists(CLAUDE_BIN)
+    return bool(CLAUDE_BIN) and os.path.exists(CLAUDE_BIN)
 
 
 def _run_claude(prompt, json_mode):
@@ -36,7 +66,7 @@ def _run_claude(prompt, json_mode):
          "--output-format", fmt, "--model", "haiku",
          "--setting-sources", "project,local"],
         capture_output=True, text=True, env=env,
-        cwd="/tmp", timeout=60, stdin=subprocess.DEVNULL,
+        cwd=_CLAUDE_CWD, timeout=60, stdin=subprocess.DEVNULL,
     )
     if proc.returncode != 0:
         raise RuntimeError(f"claude exited {proc.returncode}: {proc.stderr[:200]}")
