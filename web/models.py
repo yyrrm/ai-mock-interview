@@ -124,6 +124,9 @@ class InterviewRecord(db.Model):
     overall = db.Column(db.Integer, nullable=False)
     # 항목별 점수 [{"name": "표정 분석", "score": 82}, ...] 를 JSON 으로 저장
     scores = db.Column(db.JSON, nullable=False)
+    # 답변 내용 평가(클로드 채점) 결과 {"items":[...], "overall":"..."}.
+    # 채점 실패/데모모드/구버전 기록이면 NULL.
+    answer_eval = db.Column(db.JSON, nullable=True)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
     user = db.relationship(
@@ -141,4 +144,27 @@ class InterviewRecord(db.Model):
             "date": self.created_at.isoformat() if self.created_at else None,
             "overall": self.overall,
             "scores": self.scores or [],
+            "answer_eval": self.answer_eval,  # 구버전 기록/채점실패면 None
         }
+
+
+def ensure_schema_migrations():
+    """create_all() 이 만들지 못하는 '기존 테이블의 신규 컬럼'을 보강한다.
+
+    create_all() 은 없는 테이블만 만들 뿐, 이미 있는 테이블에 컬럼을 추가하지
+    못한다. 운영 DB 에는 interview_records 가 이미 있으므로, 신규 answer_eval
+    컬럼을 idempotent 하게 ADD 한다(이미 있으면 조용히 넘어감).
+    """
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(db.engine)
+        cols = {c["name"] for c in insp.get_columns("interview_records")}
+        if "answer_eval" in cols:
+            return
+        with db.engine.begin() as conn:
+            conn.execute(text("ALTER TABLE interview_records ADD COLUMN answer_eval JSON NULL"))
+        print("[db] interview_records.answer_eval 컬럼 추가됨")
+    except Exception as e:
+        # 테이블이 아직 없거나(첫 실행 → create_all 이 처리) 권한 문제면 넘어간다.
+        print(f"[db] answer_eval 마이그레이션 건너뜀: {e}")

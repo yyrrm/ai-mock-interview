@@ -11,7 +11,15 @@ web/server.py — AI 모의면접 웹 백엔드 (Flask)
 """
 import os
 import sys
+import logging
 from datetime import timedelta
+
+# 모듈 로거(modules.question 등)의 WARNING/exception 이 stdout/journal 에 보이도록
+# 최소 로깅 설정. gunicorn 으로 띄우면 이 출력이 systemd journal 에 기록된다.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 
 from flask import Flask, request, jsonify, send_from_directory
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -43,7 +51,7 @@ from modules.question.question_module import (
     SINCERITY_WARN_THRESHOLD,
 )
 from modules.question.content_filter import check_cover_letter, detect_injection
-from models import db, ensure_database, database_url
+from models import db, ensure_database, ensure_schema_migrations, database_url
 from auth import auth_bp, login_required, current_user
 from usage import enforce_daily_quota
 from records import records_bp
@@ -101,6 +109,7 @@ ensure_database()
 db.init_app(app)
 with app.app_context():
     db.create_all()
+    ensure_schema_migrations()  # 기존 테이블의 신규 컬럼(answer_eval) 보강
 
 app.register_blueprint(auth_bp)
 app.register_blueprint(records_bp)
@@ -293,6 +302,14 @@ def api_evaluate():
     topic = (data.get("topic") or "면접").strip()
     resume_context = data.get("resume_context") or ""
 
+    # 이력서 맥락도 클라이언트가 보내는 값이라 프롬프트 인젝션 검사 대상이다.
+    # (답변과 동일한 기준으로, 채점 LLM을 조종하려는 시도를 막는다.)
+    if detect_injection(resume_context):
+        return jsonify({
+            "ok": False,
+            "msg": "이력서 내용에 면접과 무관한 명령/지시문이 포함되어 있어요.",
+        }), 400
+
     # 입력 정규화: 길이 상한 적용 + 답변에 프롬프트 인젝션이 있으면 차단.
     qa_pairs = []
     for item in raw_qa[:MAX_EVAL_QA_PAIRS]:
@@ -320,7 +337,10 @@ def api_evaluate():
         result = evaluate_answers(qa_pairs, topic=topic, resume_context=resume_context)
         return jsonify({"ok": result.get("ok", False), **result})
     except Exception as e:
-        return jsonify({"ok": False, "msg": f"답변 평가 중 오류: {e}"}), 500
+        # 예외 원문을 그대로 사용자에게 노출하지 않는다(내부 경로·설정 유출 방지).
+        # 상세는 서버 로그에만 남긴다.
+        app.logger.exception("답변 평가 처리 중 예외")
+        return jsonify({"ok": False, "msg": "답변 평가 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."}), 500
 
 
 if __name__ == "__main__":
