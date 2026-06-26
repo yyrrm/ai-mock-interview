@@ -1,12 +1,15 @@
 from dotenv import load_dotenv
 import os
 import json
+import logging
 import shutil
 import subprocess
 from openai import OpenAI
 
 # .env 파일 로드
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 # OpenAI 클라이언트 생성 (API 키가 없으면 None → 폴백 모드로 동작)
 # 주의: 이 client 는 web/tts.py 가 import 해 TTS 용으로 재사용한다(제거 금지).
@@ -66,13 +69,17 @@ def _run_claude(prompt, json_mode, model="haiku", timeout=60):
     """
     fmt = "json" if json_mode else "text"
     env = dict(os.environ, MAX_THINKING_TOKENS="0", HOME=CLAUDE_HOME)
-    proc = subprocess.run(
-        [CLAUDE_BIN, "-p", prompt,
-         "--output-format", fmt, "--model", model,
-         "--setting-sources", "project,local"],
-        capture_output=True, text=True, env=env,
-        cwd=_CLAUDE_CWD, timeout=timeout, stdin=subprocess.DEVNULL,
-    )
+    try:
+        proc = subprocess.run(
+            [CLAUDE_BIN, "-p", prompt,
+             "--output-format", fmt, "--model", model,
+             "--setting-sources", "project,local"],
+            capture_output=True, text=True, env=env,
+            cwd=_CLAUDE_CWD, timeout=timeout, stdin=subprocess.DEVNULL,
+        )
+    except subprocess.TimeoutExpired as e:
+        # 타임아웃을 일반 오류와 구분해 올린다(호출부 로깅/메시지용).
+        raise TimeoutError(f"claude({model}) {timeout}s 타임아웃") from e
     if proc.returncode != 0:
         raise RuntimeError(f"claude exited {proc.returncode}: {proc.stderr[:200]}")
     if not json_mode:
@@ -91,8 +98,14 @@ def _extract_json(text):
     """첫 '{' 부터 '유효한 JSON 객체 1개'만 파싱. 코드펜스(```json)·뒤 잡담 무시."""
     start = text.find("{")
     if start == -1:
+        logger.warning("claude 출력에 JSON 객체 없음. 앞부분: %s", (text or "")[:500])
         raise ValueError("no JSON object in claude output")
-    obj, _ = json.JSONDecoder().raw_decode(text[start:])
+    try:
+        obj, _ = json.JSONDecoder().raw_decode(text[start:])
+    except json.JSONDecodeError:
+        # 파싱 실패 시 원본 앞부분을 남겨 디버깅을 돕는다(호출부에서 폴백 처리됨).
+        logger.warning("claude JSON 파싱 실패. 앞부분: %s", text[start:start + 500])
+        raise
     return obj
 
 # 이력서 텍스트가 너무 길면 프롬프트 비용/한도 초과 → 앞부분만 사용
@@ -389,9 +402,10 @@ def evaluate_answers(qa_pairs, topic="면접", resume_context=None):
 
     Returns:
         dict: {
-            "ok": bool,                # 채점 성공 여부(폴백이면 False)
-            "items": [{"label","grade","comment"}],  # 항목별 등급(상/중/하)+코멘트
+            "ok": bool,                # 채점 성공 여부(폴백/오류면 False)
+            "items": [{"label","grade","comment"}],  # 항목별 등급(상/중상/중하/하)+코멘트
             "overall": str,            # 종합 코멘트 한두 문장
+            "mode": str,               # "ok"|"fallback"|"error" — 프론트가 상황을 구분하도록
         }
     """
     qa_block = _build_qa_block(qa_pairs or [])
@@ -400,6 +414,7 @@ def evaluate_answers(qa_pairs, topic="면접", resume_context=None):
     if not _claude_available() or not qa_block:
         return {
             "ok": False,
+            "mode": "fallback",
             "items": [],
             "overall": "(데모 모드) 답변 내용 평가를 하려면 Claude CLI 가 필요합니다."
             if not _claude_available()
@@ -457,11 +472,21 @@ items 의 label 은 정확히 [{labels_csv}] 순서/이름으로:
         overall = str(data.get("overall", "")).strip()
         if not items:
             raise ValueError("no eval items")
-        return {"ok": True, "items": items, "overall": overall}
-    except Exception as e:
-        print("답변 평가 오류:", e)
+        return {"ok": True, "mode": "ok", "items": items, "overall": overall}
+    except TimeoutError as e:
+        logger.warning("답변 평가 타임아웃: %s", e)
         return {
             "ok": False,
+            "mode": "error",
+            "items": [],
+            "overall": "답변 평가가 시간 내에 완료되지 않았습니다. 잠시 후 다시 시도해 주세요.",
+        }
+    except Exception:
+        # 전체 트레이스백을 서버 로그에 남긴다(원본 출력 디버깅용).
+        logger.exception("답변 평가 오류")
+        return {
+            "ok": False,
+            "mode": "error",
             "items": [],
             "overall": "답변 평가 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.",
         }

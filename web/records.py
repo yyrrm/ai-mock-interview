@@ -13,6 +13,34 @@ records_bp = Blueprint("records", __name__)
 
 
 MAX_SCORE_ITEMS = 20  # 점수 항목 개수 상한 (악의적 대량 입력 방지)
+MAX_EVAL_ITEMS = 10        # answer_eval 항목 개수 상한
+MAX_EVAL_TEXT = 1000       # answer_eval 코멘트/종합 텍스트 길이 상한
+
+
+def _clean_answer_eval(raw):
+    """answer_eval 페이로드를 검증·정규화해 저장 가능한 dict 로 만든다.
+
+    구조: {"items":[{"label","grade","comment"}], "overall": str}
+    없거나 형식이 틀리면 None 을 돌려준다(저장 안 함 — 선택 필드).
+    """
+    if not isinstance(raw, dict):
+        return None
+    items_raw = raw.get("items")
+    if not isinstance(items_raw, list) or not items_raw:
+        return None
+    items = []
+    for it in items_raw[:MAX_EVAL_ITEMS]:
+        if not isinstance(it, dict):
+            continue
+        label = str(it.get("label", "")).strip()[:50]
+        grade = str(it.get("grade", "")).strip()[:10]
+        comment = str(it.get("comment", "")).strip()[:MAX_EVAL_TEXT]
+        if label:
+            items.append({"label": label, "grade": grade, "comment": comment})
+    if not items:
+        return None
+    overall = str(raw.get("overall", "")).strip()[:MAX_EVAL_TEXT]
+    return {"items": items, "overall": overall}
 
 
 def _validate_payload(data):
@@ -65,14 +93,50 @@ def create_record():
     if overall is None:
         return jsonify({"ok": False, "msg": cleaned}), 400  # cleaned = 오류메시지
 
+    # 답변 내용 평가(선택). 없거나 형식이 틀리면 None 으로 저장(채점 실패/구버전).
+    answer_eval = _clean_answer_eval(data.get("answer_eval"))
+
     try:
-        rec = InterviewRecord(user_id=user.id, overall=overall, scores=cleaned)
+        rec = InterviewRecord(
+            user_id=user.id, overall=overall, scores=cleaned, answer_eval=answer_eval
+        )
         db.session.add(rec)
         db.session.commit()
     except Exception as e:
         db.session.rollback()
         print("기록 저장 오류:", e)
         return jsonify({"ok": False, "msg": "기록 저장 중 오류가 발생했습니다."}), 500
+
+    return jsonify({"ok": True, "record": rec.to_dict()})
+
+
+@records_bp.patch("/api/records/<int:record_id>")
+def update_record_eval(record_id):
+    """기존 면접 기록에 답변 내용 평가(answer_eval)를 뒤늦게 붙인다.
+
+    채점은 비동기로 도착하므로(면접 종료 직후 기록은 먼저 저장됨), 채점이
+    완료되면 본인 소유 기록에 한해 answer_eval 만 갱신한다.
+    """
+    user = current_user()
+    if user is None:
+        return jsonify({"ok": False, "msg": "로그인이 필요합니다."}), 401
+
+    rec = InterviewRecord.query.filter_by(id=record_id, user_id=user.id).first()
+    if rec is None:
+        return jsonify({"ok": False, "msg": "기록을 찾을 수 없습니다."}), 404
+
+    data = request.get_json(silent=True) or {}
+    answer_eval = _clean_answer_eval(data.get("answer_eval"))
+    if answer_eval is None:
+        return jsonify({"ok": False, "msg": "평가 내용이 올바르지 않습니다."}), 400
+
+    try:
+        rec.answer_eval = answer_eval
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        print("평가 갱신 오류:", e)
+        return jsonify({"ok": False, "msg": "평가 저장 중 오류가 발생했습니다."}), 500
 
     return jsonify({"ok": True, "record": rec.to_dict()})
 

@@ -151,6 +151,7 @@ type InterviewRecord = {
   date: string; // ISO (서버 created_at)
   overall: number;
   scores: { name: string; score: number }[];
+  answer_eval?: AnswerEval | null; // 답변 내용 평가(구버전 기록/채점실패면 null)
 };
 
 // 분석 채널 메타 — 이름(막대/기록) · 레이더 라벨 · 막대 색.
@@ -167,19 +168,24 @@ type ChannelScores = Record<ChannelKey, number | null>;
 type ChannelFeedback = Record<ChannelKey, string>;
 
 // 답변 내용 평가(클로드 채점) 결과. 전달력 점수와 별개로, 답변 '내용'을
-// 항목별 등급(상/중/하)+코멘트로 보여준다. 숫자 점수는 신뢰도가 낮아 쓰지 않는다.
+// 항목별 등급(상/중상/중하/하)+코멘트로 보여준다. 숫자 점수는 신뢰도가 낮아 쓰지 않는다.
 type AnswerEval = {
   items: { label: string; grade: string; comment: string }[];
   overall: string;
 };
+
+// 채점 진행 상태. "loading"(도착 대기)·"done"(성공)·"failed"(실패→안내 표시).
+// 이 상태가 없으면 실패 시 카드가 영영 로딩 스피너로 남아 버린다.
+type AnswerEvalStatus = "loading" | "done" | "failed";
 
 type InterviewResult = {
   overall: number;
   scores: { name: string; score: number; color: string }[];
   radar: { subject: string; A: number }[];
   feedback: { type: "good" | "improve"; text: string }[];
-  // 답변 내용 평가(클로드). 채점 실패/데모모드면 undefined.
+  // 답변 내용 평가(클로드). status 로 로딩/성공/실패를 구분한다.
   answerEval?: AnswerEval;
+  answerEvalStatus?: AnswerEvalStatus;
   // 평가 무효 사유(예: 3분 미만). 있으면 점수를 매기지 않고 저장도 하지 않는다.
   invalidReason?: string;
 };
@@ -263,6 +269,14 @@ export default function App() {
   // 채점에는 이 맵을 쓴다(무응답 질문은 빈 답으로 남아 정렬이 어긋나지 않는다).
   const qaRef = useRef<Record<number, string>>({});
   const sessionIdRef = useRef<string>("");
+  // 비동기 채점이 컴포넌트 언마운트 후 setState 하는 것을 막는 가드.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   // 앱 로드 시 세션 복원 — 새로고침해도 로그인 유지
   useEffect(() => {
@@ -570,40 +584,20 @@ export default function App() {
     // 음성이 거의 감지되지 않으면(무응답) 종합점수를 제한한다.
     // 표정·시선·자세는 '카메라 앞에 있었는지'만 보므로, 충실한 답변 없이도 높게 나올 수 있다.
     const built = buildResult(scores, fb, { noSpeech: voice.noSpeech === true });
-    setResult(built);
-
-    // 답변 내용 평가(클로드 채점): 무응답이 아니고 실제 답변이 있을 때만 호출.
-    // 채점은 수 초~수십 초 걸릴 수 있어, 결과 화면을 먼저 띄운 뒤 도착하면 채워 넣는다.
     // 질문↔답변은 qaRef(질문 인덱스 → 답변)로 매칭한다. answersRef[i] 로 맞추면
     // 무응답 질문이 하나라도 있을 때 그 뒤 답변이 한 칸씩 밀려 엉뚱한 질문에 붙는다.
     const answeredQa = asked
       .map((question, i) => ({ question, answer: (qaRef.current[i] ?? "").trim() }))
       .filter((p) => p.answer); // 무응답 질문은 채점에서 제외
-    if (voice.noSpeech !== true && answeredQa.length > 0) {
-      const qa = answeredQa;
-      void (async () => {
-        try {
-          const res = await fetch("/api/evaluate", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ qa, topic, resume_context: resumeText }),
-          });
-          const data = await res.json();
-          if (data.ok && Array.isArray(data.items) && data.items.length > 0) {
-            setResult((prev) =>
-              prev
-                ? { ...prev, answerEval: { items: data.items, overall: data.overall ?? "" } }
-                : prev
-            );
-          }
-        } catch {
-          // 채점 실패는 무시 — 전달력 점수만으로 결과를 보여준다.
-        }
-      })();
-    }
+    const willEvaluate = voice.noSpeech !== true && answeredQa.length > 0;
+
+    // 채점을 할 경우, 결과 카드를 '로딩' 상태로 먼저 띄운다(도착/실패하면 갱신).
+    setResult(willEvaluate ? { ...built, answerEvalStatus: "loading" } : built);
 
     // 끝까지 완료 + 측정된 점수가 하나라도 있으면 기록으로 저장한다(로그인 사용자, 서버 DB).
     // 저장 완료를 await 해서 결과/기록 화면 진입 시 누락(경쟁 조건)을 막는다.
+    // 생성된 record id 를 받아두면, 비동기 채점이 도착했을 때 그 기록에 붙일 수 있다.
+    let recordId: number | null = null;
     if (!isAbandoned && built.scores.length > 0) {
       try {
         const res = await fetch("/api/records", {
@@ -614,14 +608,60 @@ export default function App() {
             scores: built.scores.map((s) => ({ name: s.name, score: s.score })),
           }),
         });
-        if (!res.ok) console.warn("면접 기록 저장 실패:", res.status);
+        if (res.ok) {
+          const data = await res.json();
+          recordId = data?.record?.id ?? null;
+        } else {
+          console.warn("면접 기록 저장 실패:", res.status);
+        }
       } catch {
         console.warn("면접 기록 저장 중 네트워크 오류");
       }
     }
+
     setAbandoned(isAbandoned);
     window.history.pushState({ screen: "result" }, "");
     setScreen("result");
+
+    // 답변 내용 평가(클로드 채점)는 수 초~수십 초 걸릴 수 있어, 화면 전환 후 백그라운드로
+    // 진행한다. 성공하면 결과 카드를 채우고 기록(record)에도 붙이고, 실패하면 '실패' 상태로
+    // 바꿔 무한 로딩 스피너를 피한다. 언마운트 후 setState 는 mountedRef 로 막는다.
+    if (willEvaluate) {
+      void (async () => {
+        try {
+          const res = await fetch("/api/evaluate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ qa: answeredQa, topic, resume_context: resumeText }),
+          });
+          const data = await res.json();
+          if (data.ok && Array.isArray(data.items) && data.items.length > 0) {
+            const answerEval = { items: data.items, overall: data.overall ?? "" };
+            if (mountedRef.current) {
+              setResult((prev) =>
+                prev ? { ...prev, answerEval, answerEvalStatus: "done" } : prev
+              );
+            }
+            // 채점 결과를 기록에 붙여 새로고침/기록 화면에서도 보이게 한다.
+            if (recordId != null) {
+              fetch(`/api/records/${recordId}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ answer_eval: answerEval }),
+              }).catch(() => {
+                /* 기록 갱신 실패는 화면 표시에 영향 없음 */
+              });
+            }
+          } else if (mountedRef.current) {
+            setResult((prev) => (prev ? { ...prev, answerEvalStatus: "failed" } : prev));
+          }
+        } catch {
+          if (mountedRef.current) {
+            setResult((prev) => (prev ? { ...prev, answerEvalStatus: "failed" } : prev));
+          }
+        }
+      })();
+    }
   };
 
   return (
@@ -2141,7 +2181,17 @@ const GRADE_STYLE: Record<string, string> = {
   하: "bg-red-100 text-red-700 border-red-200",
 };
 
-function AnswerEvalCard({ answerEval }: { answerEval?: AnswerEval }) {
+function AnswerEvalCard({
+  answerEval,
+  status,
+}: {
+  answerEval?: AnswerEval;
+  status?: AnswerEvalStatus;
+}) {
+  // 상태 결정: 명시 status 우선, 없으면 데이터 유무로 추론(기록 화면 재사용 대비).
+  const effective: AnswerEvalStatus =
+    status ?? (answerEval && answerEval.items.length > 0 ? "done" : "loading");
+
   return (
     <div className="navy-card rounded-2xl p-6">
       <div className="flex items-center gap-2 mb-1">
@@ -2155,12 +2205,21 @@ function AnswerEvalCard({ answerEval }: { answerEval?: AnswerEval }) {
         참고용 코멘트로 활용하세요.
       </p>
 
-      {!answerEval ? (
+      {effective === "loading" ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground py-6 justify-center">
           <svg className="animate-spin" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M21 12a9 9 0 1 1-6.219-8.56" />
           </svg>
           답변 내용을 분석하는 중입니다…
+        </div>
+      ) : effective === "failed" || !answerEval ? (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground py-6 justify-center">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ea580c" strokeWidth="2">
+            <circle cx="12" cy="12" r="10" />
+            <line x1="12" y1="8" x2="12" y2="12" />
+            <line x1="12" y1="16" x2="12.01" y2="16" />
+          </svg>
+          답변 내용 평가를 불러오지 못했어요. (전달력 점수는 정상 측정됨)
         </div>
       ) : (
         <>
@@ -2441,7 +2500,10 @@ function ResultScreen({
                   </div>
                 </div>
 
-                <AnswerEvalCard answerEval={result!.answerEval} />
+                <AnswerEvalCard
+                  answerEval={result!.answerEval}
+                  status={result!.answerEvalStatus}
+                />
               </div>
             )}
           </>
@@ -2452,6 +2514,79 @@ function ResultScreen({
 }
 
 /* ─────────────────────────── HISTORY ─────────────────────────── */
+
+// 기록 1건 카드. 답변 내용 평가(answer_eval)가 저장돼 있으면 펼쳐서 볼 수 있다.
+function HistoryRecordCard({ record: r }: { record: InterviewRecord }) {
+  const [open, setOpen] = useState(false);
+  const fmtDate = (iso: string) => {
+    const d = new Date(iso);
+    const p = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}.${p(d.getMonth() + 1)}.${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  };
+  const hasEval = !!r.answer_eval && (r.answer_eval.items?.length ?? 0) > 0;
+
+  return (
+    <div className="navy-card rounded-2xl p-5">
+      <div className="flex items-center gap-5">
+        <div className="flex flex-col items-center justify-center w-20 shrink-0">
+          <div className="text-3xl font-bold text-[hsl(var(--accent))]">{r.overall}</div>
+          <div className="text-xs text-muted-foreground">종합점수</div>
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold text-[hsl(var(--primary))] mb-2">{fmtDate(r.date)}</p>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+            {r.scores.map((s) => (
+              <div key={s.name} className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground w-16 shrink-0">{s.name}</span>
+                <div className="flex-1 h-1.5 rounded-full bg-[hsl(var(--secondary))] overflow-hidden">
+                  <div className="h-full rounded-full bg-[hsl(var(--accent))]" style={{ width: `${s.score}%` }} />
+                </div>
+                <span className="text-xs tabular-nums text-foreground w-7 text-right">{s.score}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {hasEval && (
+        <div className="mt-4 pt-4 border-t border-[hsl(var(--border))]">
+          <button
+            onClick={() => setOpen((v) => !v)}
+            className="text-xs font-semibold text-[hsl(var(--accent))] hover:underline"
+          >
+            {open ? "답변 내용 평가 접기 ▲" : "답변 내용 평가 보기 ▼"}
+          </button>
+          {open && (
+            <div className="mt-3 space-y-2.5">
+              {r.answer_eval!.items.map((it, i) => (
+                <div key={i} className="flex items-start gap-2.5">
+                  <span
+                    className={`flex-shrink-0 min-w-[2.5rem] h-6 px-1.5 rounded-md border flex items-center justify-center text-xs font-bold ${
+                      GRADE_STYLE[it.grade] ?? "bg-gray-100 text-gray-700 border-gray-200"
+                    }`}
+                  >
+                    {it.grade}
+                  </span>
+                  <div>
+                    <p className="text-xs font-semibold text-[hsl(var(--primary))]">{it.label}</p>
+                    {it.comment && (
+                      <p className="text-xs text-muted-foreground leading-relaxed">{it.comment}</p>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {r.answer_eval!.overall && (
+                <div className="mt-2 rounded-lg bg-[hsl(var(--secondary))] p-3">
+                  <p className="text-xs text-muted-foreground leading-relaxed">{r.answer_eval!.overall}</p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function HistoryScreen({
   userName,
@@ -2511,26 +2646,7 @@ function HistoryScreen({
           <div className="flex flex-col gap-4">
             <p className="text-muted-foreground text-sm">총 {records.length}회의 면접 기록</p>
             {records.map((r) => (
-              <div key={r.id} className="navy-card rounded-2xl p-5 flex items-center gap-5">
-                <div className="flex flex-col items-center justify-center w-20 shrink-0">
-                  <div className="text-3xl font-bold text-[hsl(var(--accent))]">{r.overall}</div>
-                  <div className="text-xs text-muted-foreground">종합점수</div>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-[hsl(var(--primary))] mb-2">{fmtDate(r.date)}</p>
-                  <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
-                    {r.scores.map((s) => (
-                      <div key={s.name} className="flex items-center gap-2">
-                        <span className="text-xs text-muted-foreground w-16 shrink-0">{s.name}</span>
-                        <div className="flex-1 h-1.5 rounded-full bg-[hsl(var(--secondary))] overflow-hidden">
-                          <div className="h-full rounded-full bg-[hsl(var(--accent))]" style={{ width: `${s.score}%` }} />
-                        </div>
-                        <span className="text-xs tabular-nums text-foreground w-7 text-right">{s.score}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
+              <HistoryRecordCard key={r.id} record={r} />
             ))}
           </div>
         )}
