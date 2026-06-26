@@ -35,6 +35,7 @@ load_dotenv()
 from modules.question.question_module import (
     analyze_resume,
     make_question,
+    evaluate_answers,
     build_cover_letter_text,
     COVER_LETTER_SECTIONS,
     COVER_LETTER_GUIDANCE,
@@ -274,6 +275,52 @@ def api_question():
         return jsonify({"ok": True, "question": question})
     except Exception as e:
         return jsonify({"ok": False, "msg": f"질문 생성 중 오류: {e}"}), 500
+
+
+# ===============================
+# API: 답변 내용 평가 (면접 종료 시 1회)
+#   JSON: { qa: [{question, answer}, ...], topic, resume_context }
+#   → 항목별 등급(상/중/하) + 코멘트 + 종합 코멘트
+# ===============================
+MAX_EVAL_QA_PAIRS = 12  # 채점에 받을 Q&A 최대 개수 (악용·토큰 비용 방지)
+
+@app.route("/api/evaluate", methods=["POST"])
+@login_required
+@limiter.limit("30 per hour; 6 per minute")
+def api_evaluate():
+    data = request.get_json(silent=True) or {}
+    raw_qa = data.get("qa") or []
+    topic = (data.get("topic") or "면접").strip()
+    resume_context = data.get("resume_context") or ""
+
+    # 입력 정규화: 길이 상한 적용 + 답변에 프롬프트 인젝션이 있으면 차단.
+    qa_pairs = []
+    for item in raw_qa[:MAX_EVAL_QA_PAIRS]:
+        if not isinstance(item, dict):
+            continue
+        q = (item.get("question") or "").strip()[:MAX_ANSWER_CHARS]
+        a = (item.get("answer") or "").strip()[:MAX_ANSWER_CHARS]
+        if detect_injection(a):
+            return jsonify({
+                "ok": False,
+                "msg": "답변에 면접과 무관한 명령/지시문이 포함되어 있어요. 면접 답변만 입력해 주세요.",
+            }), 400
+        if q or a:
+            qa_pairs.append({"question": q, "answer": a})
+
+    if not qa_pairs:
+        return jsonify({"ok": False, "msg": "평가할 답변이 없습니다."}), 400
+
+    # 계정별 일일 쿼터: 채점도 클로드 호출이라 남용 방지를 위해 카운트한다.
+    allowed, msg = enforce_daily_quota(current_user().id, "evaluate")
+    if not allowed:
+        return jsonify({"ok": False, "msg": msg}), 429
+
+    try:
+        result = evaluate_answers(qa_pairs, topic=topic, resume_context=resume_context)
+        return jsonify({"ok": result.get("ok", False), **result})
+    except Exception as e:
+        return jsonify({"ok": False, "msg": f"답변 평가 중 오류: {e}"}), 500
 
 
 if __name__ == "__main__":
