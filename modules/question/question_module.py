@@ -434,8 +434,9 @@ def evaluate_answers(qa_pairs, topic="면접", resume_context=None):
 {rubric_lines}
 
 [채점 규칙]
-1. 각 항목을 "상" / "중" / "하" 중 하나로 등급 매긴다.
-   - 숫자 점수는 쓰지 마라(상/중/하만).
+1. 각 항목을 "상" / "중상" / "중하" / "하" 4단계 중 하나로 등급 매긴다.
+   - 상: 우수, 중상: 양호, 중하: 보통/미흡, 하: 부족
+   - 숫자 점수는 쓰지 마라(이 4단계 등급만).
 2. 각 항목마다 근거를 한 문장 코멘트로 적는다(구체적으로, 두루뭉술 금지).
 3. 마지막에 전체 종합 코멘트를 한두 문장으로 적는다(가장 도움이 될 개선점 중심).
 4. 답변이 무응답이거나 면접과 무관하면 솔직하게 낮게 평가한다.
@@ -444,7 +445,7 @@ def evaluate_answers(qa_pairs, topic="면접", resume_context=None):
 [출력 형식]
 반드시 아래 JSON 형식으로만, 한국어로 출력(코드펜스·설명·다른 텍스트 절대 금지).
 items 의 label 은 정확히 [{labels_csv}] 순서/이름으로:
-{{"items":[{{"label":"질문 적합성","grade":"상","comment":"..."}}],"overall":"..."}}
+{{"items":[{{"label":"질문 적합성","grade":"중상","comment":"..."}}],"overall":"..."}}
 """
 
     try:
@@ -463,14 +464,14 @@ items 의 label 은 정확히 [{labels_csv}] 순서/이름으로:
         }
 
 
-_VALID_GRADES = {"상", "중", "하"}
+_VALID_GRADES = {"상", "중상", "중하", "하"}
 
 
 def _normalize_eval_items(raw):
     """LLM 이 돌려준 items 를 루브릭 순서/라벨에 맞춰 안전하게 정규화한다.
 
     - 라벨로 매칭해 루브릭 순서대로 재배열(모델이 순서를 바꿔도 안전)
-    - 등급이 상/중/하가 아니면 '중'으로 보정
+    - 등급이 상/중상/중하/하가 아니면 '중하'로 보정(구 '중' 출력도 '중하'로)
     - 누락된 항목은 건너뛴다(있는 것만 보여줌)
     """
     if not isinstance(raw, list):
@@ -486,7 +487,8 @@ def _normalize_eval_items(raw):
             continue
         grade = str(it.get("grade", "")).strip()
         if grade not in _VALID_GRADES:
-            grade = "중"
+            # 모델이 옛 3단계 '중'을 내거나 이상한 값을 내면 '중하'로 보정.
+            grade = "중하"
         items.append({
             "label": r["label"],
             "grade": grade,
