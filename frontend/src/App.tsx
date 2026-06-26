@@ -2131,11 +2131,13 @@ function InterviewScreen({
 
 // 답변 내용 평가(클로드 채점) 카드. 채점은 비동기로 도착하므로:
 //   - answerEval 이 아직 없으면 "분석 중…" 안내
-//   - 도착하면 항목별 등급(상/중/하)+코멘트 + 종합 코멘트
+//   - 도착하면 항목별 등급(상/중상/중하/하)+코멘트 + 종합 코멘트
 // 점수가 아니라 '참고용 코멘트'임을 명시한다(면접 채점은 본질적으로 주관적).
+// 4단계 등급 색상: 상=초록, 중상=연두, 중하=노랑, 하=빨강.
 const GRADE_STYLE: Record<string, string> = {
   상: "bg-green-100 text-green-800 border-green-200",
-  중: "bg-yellow-100 text-yellow-800 border-yellow-200",
+  중상: "bg-lime-100 text-lime-800 border-lime-200",
+  중하: "bg-yellow-100 text-yellow-800 border-yellow-200",
   하: "bg-red-100 text-red-700 border-red-200",
 };
 
@@ -2166,7 +2168,7 @@ function AnswerEvalCard({ answerEval }: { answerEval?: AnswerEval }) {
             {answerEval.items.map((it, i) => (
               <div key={i} className="flex items-start gap-3">
                 <span
-                  className={`flex-shrink-0 w-7 h-7 rounded-lg border flex items-center justify-center text-sm font-bold ${
+                  className={`flex-shrink-0 min-w-[2.75rem] h-7 px-1.5 rounded-lg border flex items-center justify-center text-sm font-bold ${
                     GRADE_STYLE[it.grade] ?? "bg-gray-100 text-gray-700 border-gray-200"
                   }`}
                 >
