@@ -166,11 +166,20 @@ type ChannelKey = (typeof CHANNELS)[number]["key"];
 type ChannelScores = Record<ChannelKey, number | null>;
 type ChannelFeedback = Record<ChannelKey, string>;
 
+// 답변 내용 평가(클로드 채점) 결과. 전달력 점수와 별개로, 답변 '내용'을
+// 항목별 등급(상/중/하)+코멘트로 보여준다. 숫자 점수는 신뢰도가 낮아 쓰지 않는다.
+type AnswerEval = {
+  items: { label: string; grade: string; comment: string }[];
+  overall: string;
+};
+
 type InterviewResult = {
   overall: number;
   scores: { name: string; score: number; color: string }[];
   radar: { subject: string; A: number }[];
   feedback: { type: "good" | "improve"; text: string }[];
+  // 답변 내용 평가(클로드). 채점 실패/데모모드면 undefined.
+  answerEval?: AnswerEval;
   // 평가 무효 사유(예: 3분 미만). 있으면 점수를 매기지 않고 저장도 하지 않는다.
   invalidReason?: string;
 };
@@ -550,6 +559,34 @@ export default function App() {
     // 표정·시선·자세는 '카메라 앞에 있었는지'만 보므로, 충실한 답변 없이도 높게 나올 수 있다.
     const built = buildResult(scores, fb, { noSpeech: voice.noSpeech === true });
     setResult(built);
+
+    // 답변 내용 평가(클로드 채점): 무응답이 아니고 실제 답변이 있을 때만 호출.
+    // 채점은 수 초~수십 초 걸릴 수 있어, 결과 화면을 먼저 띄운 뒤 도착하면 채워 넣는다.
+    if (voice.noSpeech !== true && answersRef.current.some((a) => a.trim())) {
+      const qa = asked.map((question, i) => ({
+        question,
+        answer: answersRef.current[i] ?? "",
+      }));
+      void (async () => {
+        try {
+          const res = await fetch("/api/evaluate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ qa, topic, resume_context: resumeText }),
+          });
+          const data = await res.json();
+          if (data.ok && Array.isArray(data.items) && data.items.length > 0) {
+            setResult((prev) =>
+              prev
+                ? { ...prev, answerEval: { items: data.items, overall: data.overall ?? "" } }
+                : prev
+            );
+          }
+        } catch {
+          // 채점 실패는 무시 — 전달력 점수만으로 결과를 보여준다.
+        }
+      })();
+    }
 
     // 끝까지 완료 + 측정된 점수가 하나라도 있으면 기록으로 저장한다(로그인 사용자, 서버 DB).
     // 저장 완료를 await 해서 결과/기록 화면 진입 시 누락(경쟁 조건)을 막는다.
@@ -2078,6 +2115,70 @@ function InterviewScreen({
 
 /* ─────────────────────────── RESULT ─────────────────────────── */
 
+// 답변 내용 평가(클로드 채점) 카드. 채점은 비동기로 도착하므로:
+//   - answerEval 이 아직 없으면 "분석 중…" 안내
+//   - 도착하면 항목별 등급(상/중/하)+코멘트 + 종합 코멘트
+// 점수가 아니라 '참고용 코멘트'임을 명시한다(면접 채점은 본질적으로 주관적).
+const GRADE_STYLE: Record<string, string> = {
+  상: "bg-green-100 text-green-800 border-green-200",
+  중: "bg-yellow-100 text-yellow-800 border-yellow-200",
+  하: "bg-red-100 text-red-700 border-red-200",
+};
+
+function AnswerEvalCard({ answerEval }: { answerEval?: AnswerEval }) {
+  return (
+    <div className="navy-card rounded-2xl p-6">
+      <div className="flex items-center gap-2 mb-1">
+        <h3 className="font-bold text-[hsl(var(--primary))]">답변 내용 평가</h3>
+        <span className="text-xs text-muted-foreground bg-[hsl(var(--secondary))] px-2 py-0.5 rounded-full">
+          참고용 · AI 채점
+        </span>
+      </div>
+      <p className="text-xs text-muted-foreground mb-4">
+        목소리·표정 같은 전달력과 별개로, 답변 <b>내용</b>을 평가했습니다. 점수가 아닌
+        참고용 코멘트로 활용하세요.
+      </p>
+
+      {!answerEval ? (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground py-6 justify-center">
+          <svg className="animate-spin" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+          </svg>
+          답변 내용을 분석하는 중입니다…
+        </div>
+      ) : (
+        <>
+          <div className="space-y-3">
+            {answerEval.items.map((it, i) => (
+              <div key={i} className="flex items-start gap-3">
+                <span
+                  className={`flex-shrink-0 w-7 h-7 rounded-lg border flex items-center justify-center text-sm font-bold ${
+                    GRADE_STYLE[it.grade] ?? "bg-gray-100 text-gray-700 border-gray-200"
+                  }`}
+                >
+                  {it.grade}
+                </span>
+                <div>
+                  <p className="text-sm font-semibold text-[hsl(var(--primary))]">{it.label}</p>
+                  {it.comment && (
+                    <p className="text-sm text-muted-foreground leading-relaxed">{it.comment}</p>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+          {answerEval.overall && (
+            <div className="mt-5 rounded-xl bg-[hsl(var(--secondary))] p-4">
+              <p className="text-xs font-semibold text-[hsl(var(--primary))] mb-1">종합 코멘트</p>
+              <p className="text-sm text-muted-foreground leading-relaxed">{answerEval.overall}</p>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function ResultScreen({
   abandoned,
   result,
@@ -2323,6 +2424,8 @@ function ResultScreen({
                     </button>
                   </div>
                 </div>
+
+                <AnswerEvalCard answerEval={result!.answerEval} />
               </div>
             )}
           </>
