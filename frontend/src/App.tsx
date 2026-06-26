@@ -258,6 +258,10 @@ export default function App() {
   const faceRef = useRef<FaceAnalyzerHandle | null>(null);
   const voiceRef = useRef<VoiceAnalyzerHandle | null>(null);
   const answersRef = useRef<string[]>([]); // STT로 인식된 답변 누적(음성 단어수 폴백 + 마지막 답변 반영용)
+  // 질문 인덱스 → 그 질문에 대한 답변. 답변 채점 시 질문↔답변을 '인덱스로' 정확히
+  // 매칭하기 위함. answersRef 는 무응답을 건너뛰어 push 하므로 인덱스가 밀린다 →
+  // 채점에는 이 맵을 쓴다(무응답 질문은 빈 답으로 남아 정렬이 어긋나지 않는다).
+  const qaRef = useRef<Record<number, string>>({});
   const sessionIdRef = useRef<string>("");
 
   // 앱 로드 시 세션 복원 — 새로고침해도 로그인 유지
@@ -461,6 +465,7 @@ export default function App() {
     setQuestions([firstQ]);
     setAsked([firstQ]);
     answersRef.current = []; // 새 면접 시작 → 답변 누적 초기화
+    qaRef.current = {}; // 질문↔답변 매핑도 초기화
     setCurrentQ(0);
     setTimer(0);
     setBusy(false);
@@ -478,7 +483,11 @@ export default function App() {
     setBusy(true);
     // 직전 질문에 대한 음성 답변을 STT 전사에서 가져와 꼬리질문 생성에 사용한다.
     const spokenAnswer = voiceRef.current?.takeTranscript() ?? "";
-    if (spokenAnswer.trim()) answersRef.current.push(spokenAnswer.trim());
+    if (spokenAnswer.trim()) {
+      answersRef.current.push(spokenAnswer.trim());
+      // 방금 답한 질문(currentQ)에 답변을 매핑 — 채점 시 질문↔답변 정렬용.
+      qaRef.current[currentQ] = spokenAnswer.trim();
+    }
     let nextQ = QUESTIONS[questions.length % QUESTIONS.length];
     try {
       const res = await fetch("/api/question", {
@@ -511,7 +520,10 @@ export default function App() {
       : 0;
     const tooShort = elapsedSec < MIN_INTERVIEW_SEC;
     const lastSpoken = voiceRef.current?.takeTranscript() ?? "";
-    if (lastSpoken.trim()) answersRef.current.push(lastSpoken.trim()); // 마지막 답변 반영
+    if (lastSpoken.trim()) {
+      answersRef.current.push(lastSpoken.trim()); // 마지막 답변 반영
+      qaRef.current[currentQ] = lastSpoken.trim(); // 마지막 질문에 답변 매핑(채점용)
+    }
 
     // 분석기는 어떤 경우든 정리(리소스 해제). 너무 짧은 면접은 점수를 버린다.
     const pose = poseRef.current
@@ -562,11 +574,13 @@ export default function App() {
 
     // 답변 내용 평가(클로드 채점): 무응답이 아니고 실제 답변이 있을 때만 호출.
     // 채점은 수 초~수십 초 걸릴 수 있어, 결과 화면을 먼저 띄운 뒤 도착하면 채워 넣는다.
-    if (voice.noSpeech !== true && answersRef.current.some((a) => a.trim())) {
-      const qa = asked.map((question, i) => ({
-        question,
-        answer: answersRef.current[i] ?? "",
-      }));
+    // 질문↔답변은 qaRef(질문 인덱스 → 답변)로 매칭한다. answersRef[i] 로 맞추면
+    // 무응답 질문이 하나라도 있을 때 그 뒤 답변이 한 칸씩 밀려 엉뚱한 질문에 붙는다.
+    const answeredQa = asked
+      .map((question, i) => ({ question, answer: (qaRef.current[i] ?? "").trim() }))
+      .filter((p) => p.answer); // 무응답 질문은 채점에서 제외
+    if (voice.noSpeech !== true && answeredQa.length > 0) {
+      const qa = answeredQa;
       void (async () => {
         try {
           const res = await fetch("/api/evaluate", {
