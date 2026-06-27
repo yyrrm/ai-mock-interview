@@ -709,11 +709,17 @@ export default function App() {
     // 바꿔 무한 로딩 스피너를 피한다. 언마운트 후 setState 는 mountedRef 로 막는다.
     if (willEvaluate) {
       void (async () => {
+        // 서버 채점 타임아웃(EVAL_TIMEOUT, 기본 60초)보다 약간 길게 잡아,
+        // 서버가 끝내 응답하지 않으면 프론트가 직접 끊어 '실패' 상태로 전환한다
+        // (무한 로딩 스피너 방지). 서버 60초 + 네트워크 여유 = 75초.
+        const ctrl = new AbortController();
+        const timeoutId = setTimeout(() => ctrl.abort(), 75_000);
         try {
           const res = await fetch("/api/evaluate", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ qa: answeredQa, topic, resume_context: resumeText }),
+            signal: ctrl.signal,
           });
           const data = await res.json();
           if (data.ok && Array.isArray(data.items) && data.items.length > 0) {
@@ -737,9 +743,12 @@ export default function App() {
             setResult((prev) => (prev ? { ...prev, answerEvalStatus: "failed" } : prev));
           }
         } catch {
+          // 타임아웃(abort) 포함 모든 실패 → '실패' 상태로 전환(무한 로딩 방지).
           if (mountedRef.current) {
             setResult((prev) => (prev ? { ...prev, answerEvalStatus: "failed" } : prev));
           }
+        } finally {
+          clearTimeout(timeoutId);
         }
       })();
     }
@@ -2088,7 +2097,9 @@ function InterviewScreen({
       <div className="flex-1 flex flex-col lg:flex-row gap-0 overflow-y-auto lg:overflow-hidden">
         {/* Left 70% (데스크톱) / 두 번째 블록(모바일) */}
         <div className="order-2 lg:order-1 lg:flex-[7] flex flex-col p-4 sm:p-6 gap-4 sm:gap-5">
-          <div className="order-2 lg:flex-[5] min-h-[320px] lg:min-h-0 rounded-2xl border border-white/10 bg-[hsl(222,47%,12%)] overflow-y-auto relative flex flex-col items-center justify-center gap-4 py-4 shadow-xl">
+          {/* AI 면접관 시각화 패널 — 모바일에선 공간만 차지하므로 숨기고(hidden),
+              데스크톱(lg)에서만 표시한다. 모바일용 컨트롤은 질문 카드 아래에 따로 둔다. */}
+          <div className="order-2 hidden lg:flex lg:flex-[5] min-h-[320px] lg:min-h-0 rounded-2xl border border-white/10 bg-[hsl(222,47%,12%)] overflow-y-auto relative flex-col items-center justify-center gap-4 py-4 shadow-xl">
             <div
               className="absolute inset-0 opacity-5"
               style={{
@@ -2187,18 +2198,47 @@ function InterviewScreen({
             <p key={questionIndex} className="text-white text-lg sm:text-xl lg:text-2xl leading-relaxed font-medium break-keep screen-enter">
               {busy ? "다음 질문을 생성하는 중입니다..." : question}
             </p>
+
+            {/* 모바일 전용 컨트롤 — AI 면접관 패널을 숨겼으므로 질문 다시 듣기/음소거를
+                질문 카드 아래에 둔다(데스크톱에선 패널 안에 있으므로 lg:hidden). */}
+            <div className="lg:hidden mt-4 flex items-center gap-2">
+              <button
+                onClick={replayQuestion}
+                disabled={muted}
+                className="px-3 py-1.5 rounded-lg bg-white/10 text-white/80 text-xs font-medium whitespace-nowrap hover:bg-white/15 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                🔊 질문 다시 듣기
+              </button>
+              <button
+                onClick={() => setMuted((m) => !m)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${
+                  muted ? "bg-red-500/20 text-red-300" : "bg-white/10 text-white/60 hover:bg-white/15"
+                }`}
+              >
+                {muted ? "음소거 해제" : "음소거"}
+              </button>
+              {speaking && (
+                <span className="text-[hsl(var(--accent))] text-xs flex items-center gap-1.5 ml-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[hsl(var(--accent))] recording-dot" />
+                  질문하는 중…
+                </span>
+              )}
+            </div>
           </div>
         </div>
 
         {/* Right 30% (데스크톱) / 맨 위 웹캠 블록(모바일) */}
         <div className="order-1 lg:order-2 lg:flex-[3] flex flex-col p-4 lg:pl-0 gap-4">
+          {/* 모바일에선 UI 표시 화면을 작게(max-w-[260px]). 데스크톱은 우측 칼럼 폭에 맞춘다.
+              object-contain 이라 분석에 들어가는 전체 프레임이 잘리지 않고 다 보인다(몸이 다 들어옴). */}
           <div
-            className="rounded-2xl overflow-hidden border border-white/10 shadow-xl relative w-full max-w-md mx-auto lg:max-w-none"
+            className="rounded-2xl overflow-hidden border border-white/10 shadow-xl relative w-full max-w-[260px] sm:max-w-xs mx-auto lg:max-w-none bg-black"
             style={{ aspectRatio: "4/3" }}
           >
             <div className="webcam-placeholder w-full h-full">
-              {/* -scale-x-100: 화면 표시만 좌우반전(셀피 미러). 분석 좌표는 별도 보정됨. */}
-              <video ref={videoRef} autoPlay muted playsInline className="w-full h-full object-cover -scale-x-100" />
+              {/* -scale-x-100: 화면 표시만 좌우반전(셀피 미러). 분석 좌표는 별도 보정됨.
+                  object-contain: 카메라 프레임 전체를 잘림 없이 표시(분석은 원본 스트림 전체를 사용). */}
+              <video ref={videoRef} autoPlay muted playsInline className="w-full h-full object-contain -scale-x-100" />
             </div>
             <div className="absolute bottom-2 left-2 bg-black/60 backdrop-blur-sm px-2 py-1 rounded-lg text-white text-xs font-medium">
               나
@@ -2389,23 +2429,24 @@ function ResultScreen({
 
   return (
     <div className="min-h-screen flex flex-col screen-enter">
-      <nav className="navy-gradient px-6 py-4 flex items-center justify-between shadow-lg">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center">
+      <nav className="navy-gradient px-3 sm:px-6 py-4 flex items-center justify-between gap-2 shadow-lg">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+          <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center shrink-0">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2">
               <path d="M12 2a5 5 0 1 0 5 5 5 5 0 0 0-5-5z"/>
               <path d="M20.84 14a8 8 0 0 1-15.68 0"/>
             </svg>
           </div>
-          <span className="text-white font-bold text-lg">InterviewAI</span>
+          <span className="text-white font-bold text-lg truncate">InterviewAI</span>
         </div>
-        <span className="text-white/80 text-sm font-medium">
+        {/* 가운데 제목은 좁은 화면에서 로고·버튼과 겹쳐 깨지므로 sm 이상에서만 노출 */}
+        <span className="hidden sm:block text-white/80 text-sm font-medium whitespace-nowrap">
           {invalidReason ? "평가 무효" : abandoned ? "면접 중단" : "면접 결과 리포트"}
         </span>
         <button
           data-testid="button-restart"
           onClick={onRestart}
-          className="px-4 py-2 bg-white/15 text-white text-sm font-medium rounded-lg hover:bg-white/20 transition-colors"
+          className="px-3 sm:px-4 py-2 bg-white/15 text-white text-sm font-medium rounded-lg whitespace-nowrap shrink-0 hover:bg-white/20 transition-colors"
         >
           처음으로
         </button>

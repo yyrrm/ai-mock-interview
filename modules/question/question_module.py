@@ -634,7 +634,9 @@ def _followup_question_prompt(answer_text, topic, resume_block, asked_block, gui
 # 채점 모델은 질문 생성(haiku)보다 정확한 'sonnet' 을 기본으로 쓴다(추가 비용 0,
 # 구독형 CLI). 환경변수 EVAL_MODEL 로 'opus' 등으로 바꿔 실험할 수 있다.
 EVAL_MODEL = os.getenv("EVAL_MODEL", "sonnet")
-EVAL_TIMEOUT = int(os.getenv("EVAL_TIMEOUT", "120"))  # 채점은 입력이 길어 넉넉히
+# 채점은 입력이 길지만, 120초는 사용자가 '무한 로딩'으로 느낄 만큼 길다.
+# 60초로 줄여 응답성을 높이고, 초과 시 프론트가 '실패' 안내로 전환하게 한다.
+EVAL_TIMEOUT = int(os.getenv("EVAL_TIMEOUT", "60"))
 
 # 평가 항목(루브릭). name 은 사용자에게 그대로 보이는 라벨.
 EVAL_RUBRIC = [

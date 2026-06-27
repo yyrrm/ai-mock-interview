@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import time
+from collections import deque
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
+from typing import Deque, Dict, Optional, Tuple
 
 import numpy as np
 
@@ -37,11 +38,17 @@ def _score_sway(mean_disp: float) -> float:
 
 
 def _score_gesture(gestures_per_min: float) -> float:
+    # 적당한 제스처(분당 2~8회)가 가장 자연스럽다.
+    # 단, 면접에서는 손을 차분히 두는 경우가 많으므로 '제스처 없음'을 과하게
+    # 깎지 않는다(손을 안 움직여도 80점). 반대로 산만할 만큼 잦으면(분당 12회 이상)
+    # 감점한다.
     if 2.0 <= gestures_per_min <= 8.0:
         return 100.0
-    if gestures_per_min <= 1.0 or gestures_per_min >= 10.0:
-        return 40.0
-    return 70.0
+    if gestures_per_min < 2.0:
+        return 80.0           # 손동작이 적거나 없음 — 무난
+    if gestures_per_min < 12.0:
+        return 70.0           # 다소 많음
+    return 45.0               # 너무 잦아 산만
 
 
 class PoseEvaluator:
@@ -66,15 +73,28 @@ class PoseEvaluator:
     L_HIP = 23
     R_HIP = 24
 
+    # 흔들림(sway)은 '최근 구간'의 평균만 본다. 세션 전체 누적 평균을 쓰면 시간이
+    # 지날수록 분모가 커져 순간 움직임이 희석되고, 결국 점수가 한 값에 굳어버린다
+    # ('자세 점수가 74에서 안 변한다'의 주원인). 최근 SWAY_WINDOW 프레임만 보면
+    # 지금 움직이면 점수가 즉시 반응한다. 웹은 ~10fps(300ms 배치)이므로 24프레임≈수 초.
+    SWAY_WINDOW = 24
+
+    # 제스처 빈도를 환산할 최근 시간창(초). 이 안의 제스처 수를 분당으로 환산한다.
+    GESTURE_WINDOW_SEC = 15.0
+
     def __init__(self, gesture_move_threshold: float = 0.020, gesture_cooldown_sec: float = 0.45):
         self.prev_center: Optional[np.ndarray] = None
-        self.sway_sum = 0.0
-        self.sway_n = 0
+        # 최근 프레임 간 이동량(변위)을 담는 슬라이딩 윈도우.
+        self.sway_window: Deque[float] = deque(maxlen=self.SWAY_WINDOW)
 
         self.session_start = time.time()
         self._anchored = False  # 첫 update 시점으로 session_start 를 보정했는지
-        self.gesture_count = 0
+        self.gesture_count = 0   # 세션 누적(메트릭 표시·summary 용)
         self._last_gesture_ts = 0.0
+        # 제스처도 '최근 구간'만 본다. 최근 GESTURE_WINDOW_SEC 초 안에 일어난
+        # 제스처 타임스탬프만 남겨 분당 빈도로 환산 → 지금 손을 움직이면 빈도가
+        # 즉시 오르고, 멈추면 빠르게 떨어진다(누적 평균은 둘 다 반영이 느리다).
+        self.gesture_ts: Deque[float] = deque()
         self.gesture_move_threshold = float(gesture_move_threshold)
         self.gesture_cooldown_sec = float(gesture_cooldown_sec)
 
@@ -123,11 +143,11 @@ class PoseEvaluator:
 
         if self.prev_center is not None:
             disp = float(np.linalg.norm(center - self.prev_center))
-            self.sway_sum += disp
-            self.sway_n += 1
+            self.sway_window.append(disp)
         self.prev_center = center
 
-        mean_sway = (self.sway_sum / self.sway_n) if self.sway_n > 0 else 0.0
+        # 최근 구간 평균만 사용 → 지금 움직이면 즉시 점수에 반영된다.
+        mean_sway = (sum(self.sway_window) / len(self.sway_window)) if self.sway_window else 0.0
 
         # ---- gesture counting (wrists movement bursts) ----
         lw = coords[self.L_WRIST][:2]
@@ -138,10 +158,17 @@ class PoseEvaluator:
             if move >= self.gesture_move_threshold and (now - self._last_gesture_ts) >= self.gesture_cooldown_sec:
                 self.gesture_count += 1
                 self._last_gesture_ts = now
+                self.gesture_ts.append(now)
         self.prev_wrists = (lw, rw)
 
-        elapsed_min = max((now - self.session_start) / 60.0, 1e-6)
-        gestures_per_min = float(self.gesture_count) / elapsed_min
+        # 최근 시간창 밖의 제스처 타임스탬프는 버린다(현재 빈도만 반영).
+        win = self.GESTURE_WINDOW_SEC
+        while self.gesture_ts and (now - self.gesture_ts[0]) > win:
+            self.gesture_ts.popleft()
+        # 세션 초반(경과<창)에는 실제 경과 시간으로 환산해 빈도가 과대평가되지 않게 한다.
+        elapsed_sec = max(now - self.session_start, 1e-6)
+        window_sec = min(win, elapsed_sec)
+        gestures_per_min = len(self.gesture_ts) / (window_sec / 60.0)
 
         # ---- scoring ----
         scores = {
@@ -157,7 +184,7 @@ class PoseEvaluator:
             "sway_mean": round(mean_sway, 5),
             "gesture_count": int(self.gesture_count),
             "gestures_per_min": round(gestures_per_min, 2),
-            "elapsed_min": round(elapsed_min, 2),
+            "elapsed_min": round(elapsed_sec / 60.0, 2),
         }
 
         # ---- feedback ----
