@@ -245,7 +245,9 @@ def api_cover_letter():
 
 # ===============================
 # API: 다음 질문 생성
-#   JSON: { answer_text, topic, previous_questions, resume_context, guidance }
+#   JSON: { answer_text, topic, previous_questions, resume_context, guidance, section, tech }
+#   section: 자기소개서 항목 key(있으면 그 항목 주질문)
+#   tech: true 면 직무(topic) 기반 기술 질문. 둘 다 없으면 직전 답변 꼬리질문.
 # ===============================
 MAX_ANSWER_CHARS = 4000  # 답변 1개 길이 상한 (GPT 토큰 비용·악용 방지)
 
@@ -259,6 +261,11 @@ def api_question():
     previous_questions = data.get("previous_questions") or []
     resume_context = data.get("resume_context") or ""
     guidance = data.get("guidance") or ""
+    # 자기소개서 항목 key('motivation' 등). 있으면 그 항목 기반 '주질문'을 만든다.
+    section = (data.get("section") or "").strip() or None
+    # True 면 직무(topic) 기반 기술 질문을 만든다(section 보다 우선순위는 낮음).
+    # section/tech 둘 다 없으면 직전 답변을 파고드는 '꼬리질문'(question_module).
+    tech = bool(data.get("tech"))
 
     # 프롬프트 인젝션 차단: 답변에 "면접관 AI"를 향한 지시("이전 지시 무시…", 번역/코드
     # 요청 등)를 심어 면접 시스템을 범용 챗봇처럼 악용하는 시도를 GPT 호출 전에 막는다.
@@ -280,6 +287,8 @@ def api_question():
             previous_questions=previous_questions,
             resume_context=resume_context,
             guidance=guidance,
+            section=section,
+            tech=tech,
         )
         return jsonify({"ok": True, "question": question})
     except Exception as e:
