@@ -1619,14 +1619,14 @@ function PrepScreen({
           {/* 질문 개수 — 이번 면접에서 진행할 질문 수 */}
           <div className="mt-5 pt-5 border-t border-[hsl(var(--border))]">
             <label className="font-semibold text-sm text-foreground block mb-2">질문 개수</label>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {QUESTION_COUNT_OPTIONS.map((n) => (
                 <button
                   key={n}
                   type="button"
                   data-testid={`button-qcount-${n}`}
                   onClick={() => setQuestionCount(n)}
-                  className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
+                  className={`shrink-0 whitespace-nowrap px-5 py-2 rounded-xl text-sm font-semibold transition-all ${
                     questionCount === n
                       ? "navy-gradient text-white shadow"
                       : "bg-background border border-[hsl(var(--border))] text-foreground hover:border-[hsl(var(--primary))]"
@@ -1635,7 +1635,10 @@ function PrepScreen({
                   {n}개
                 </button>
               ))}
-              <span className="ml-1 text-xs text-muted-foreground">질문이 많을수록 면접이 길어집니다.</span>
+              {/* 안내문은 버튼과 너비 경쟁하지 않도록 줄바꿈 허용(모바일에서 버튼이 찌그러지지 않게). */}
+              <span className="basis-full sm:basis-auto sm:ml-1 text-xs text-muted-foreground">
+                질문이 많을수록 면접이 길어집니다.
+              </span>
             </div>
           </div>
         </div>
@@ -1684,7 +1687,8 @@ function PrepScreen({
           {/* Webcam area */}
           <div className="md:col-span-3">
             <div className="navy-card rounded-2xl overflow-hidden shadow-lg">
-              <div className="relative aspect-video webcam-placeholder">
+              {/* 모바일: 세로로 긴 프리뷰(상반신/전신이 들어오도록). 데스크톱(md+): 16:9. */}
+              <div className="relative aspect-[3/4] md:aspect-video webcam-placeholder">
                 {/* -scale-x-100: 화면 표시만 좌우반전(셀피 미러). 분석 좌표는
                     poseAnalyzer/faceAnalyzer 에서 별도로 보정하므로 영향 없음. */}
                 <video
