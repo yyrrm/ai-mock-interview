@@ -175,7 +175,7 @@ def static_files(path):
 # ===============================
 # API: 자기소개서 문항 분석
 #   JSON: { topic, sections: {growth, motivation, strength_weakness, aspiration} }
-#   → 항목별 답변을 합쳐 분석 + 첫 질문 반환 (성장과정 비중은 낮게)
+#   → 항목별 답변을 합쳐 분석 + 첫 질문 반환 (첫 질문은 '지원동기' 유형)
 # ===============================
 MAX_SECTION_CHARS = 2000
 
@@ -245,9 +245,12 @@ def api_cover_letter():
 
 # ===============================
 # API: 다음 질문 생성
-#   JSON: { answer_text, topic, previous_questions, resume_context, guidance, section, tech }
-#   section: 자기소개서 항목 key(있으면 그 항목 주질문)
-#   tech: true 면 직무(topic) 기반 기술 질문. 둘 다 없으면 직전 답변 꼬리질문.
+#   JSON: { answer_text, topic, previous_questions, resume_context, guidance,
+#           section, category, tech }
+#   우선순위: section > category > tech > (꼬리질문)
+#   section:  자기소개서 항목 key(있으면 그 항목 주질문)
+#   category: 카테고리 풀 key('experience' 등, 있으면 그 유형 씨앗 질문)
+#   tech:     true 면 직무(topic) 기반 기술 질문. 모두 없으면 직전 답변 꼬리질문.
 # ===============================
 MAX_ANSWER_CHARS = 4000  # 답변 1개 길이 상한 (GPT 토큰 비용·악용 방지)
 
@@ -263,8 +266,10 @@ def api_question():
     guidance = data.get("guidance") or ""
     # 자기소개서 항목 key('motivation' 등). 있으면 그 항목 기반 '주질문'을 만든다.
     section = (data.get("section") or "").strip() or None
-    # True 면 직무(topic) 기반 기술 질문을 만든다(section 보다 우선순위는 낮음).
-    # section/tech 둘 다 없으면 직전 답변을 파고드는 '꼬리질문'(question_module).
+    # 카테고리 풀 key('experience' 등). 있으면 그 유형 씨앗 질문(section 다음 우선).
+    category = (data.get("category") or "").strip() or None
+    # True 면 직무(topic) 기반 기술 질문을 만든다(section/category 보다 우선순위 낮음).
+    # section/category/tech 모두 없으면 직전 답변을 파고드는 '꼬리질문'.
     tech = bool(data.get("tech"))
 
     # 프롬프트 인젝션 차단: 답변에 "면접관 AI"를 향한 지시("이전 지시 무시…", 번역/코드
@@ -288,6 +293,7 @@ def api_question():
             resume_context=resume_context,
             guidance=guidance,
             section=section,
+            category=category,
             tech=tech,
         )
         return jsonify({"ok": True, "question": question})

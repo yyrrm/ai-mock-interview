@@ -131,6 +131,98 @@ COVER_LETTER_GUIDANCE = (
     "거의 다루지 마라."
 )
 
+# ── 카테고리 질문 풀(seed) ─────────────────────────────────────────────
+# 사용자가 정한 8개 카테고리의 '씨앗(예시) 질문'들. 이 문구를 그대로 내보내지
+# 않고, make_question 의 '카테고리 씨앗 모드'에서 LLM 에게 예시로 보여줘
+# 지원자 자소서·직무에 맞춘 질문 1개로 구체화하게 한다.
+#
+# 프론트 흐름(App.tsx)에서 쓰는 카테고리 키:
+#   intro(1) / motivation(2) / experience(3) / job_knowledge(4) /
+#   project(5) / personality(6) / situation(7) / closing(8)
+# 이 중 job_knowledge(4)는 별도 tech 모드를 쓰므로 여기 풀에는 설명용으로만 둔다.
+CATEGORY_POOL = {
+    "intro": {
+        "label": "자기소개형",
+        "seeds": [
+            "간단히 자기소개 부탁드립니다.",
+            "본인을 한 단어로 표현하면 무엇인가요?",
+            "본인의 장점과 단점은 무엇인가요?",
+            "주변 사람들은 본인을 어떻게 평가하나요?",
+        ],
+    },
+    "motivation": {
+        "label": "지원동기형",
+        "seeds": [
+            "우리 회사(직무)에 지원한 이유는 무엇인가요?",
+            "왜 이 직무를 선택하셨나요?",
+            "우리 회사에 대해 알고 있는 점을 말씀해 주세요.",
+            "입사 후 하고 싶은 일은 무엇인가요?",
+        ],
+    },
+    "experience": {
+        "label": "경험형",
+        "seeds": [
+            "지금까지 가장 힘들었던 경험은 무엇인가요?",
+            "팀 프로젝트에서 갈등이 있었던 경험을 말씀해 주세요.",
+            "실패한 경험과 거기서 배운 점은 무엇인가요?",
+            "리더십을 발휘한 경험이 있나요?",
+            "어떤 문제를 직접 해결한 경험을 말씀해 주세요.",
+        ],
+    },
+    "job_knowledge": {
+        "label": "직무·전공 지식",
+        "seeds": [
+            "TCP와 UDP의 차이는 무엇인가요?",
+            "OSI 7계층을 설명해 주세요.",
+            "SQL Injection이 무엇인가요?",
+            "암호화와 해싱의 차이는 무엇인가요?",
+            "프로젝트에서 사용한 기술을 설명해 주세요.",
+        ],
+    },
+    "project": {
+        "label": "프로젝트",
+        "seeds": [
+            "가장 기억에 남는 프로젝트는 무엇인가요?",
+            "그 프로젝트에서 본인의 역할은 무엇이었나요?",
+            "프로젝트에서 어려웠던 점과 해결 방법은 무엇인가요?",
+            "왜 그 기술을 사용했나요?",
+            "다시 개선한다면 어떤 점을 바꾸고 싶나요?",
+        ],
+    },
+    "personality": {
+        "label": "인성·태도",
+        "seeds": [
+            "갈등이 생기면 어떻게 해결하나요?",
+            "상사가 부당한 지시를 하면 어떻게 하시겠습니까?",
+            "팀원이 일을 제대로 하지 않으면 어떻게 하나요?",
+            "스트레스를 어떻게 관리하나요?",
+            "본인이 조직에 기여할 수 있는 점은 무엇인가요?",
+        ],
+    },
+    "situation": {
+        "label": "상황 대처",
+        "seeds": [
+            "마감이 얼마 안 남았는데 오류가 발생하면 어떻게 하시겠습니까?",
+            "모르는 업무를 맡으면 어떻게 하시겠습니까?",
+            "팀원과 의견이 다르면 어떻게 하시겠습니까?",
+            "실수했을 때 어떻게 대처하나요?",
+        ],
+    },
+    "closing": {
+        "label": "마지막 질문",
+        "seeds": [
+            "마지막으로 하고 싶은 말이 있나요?",
+            "마지막으로 궁금한 점이 있나요?",
+        ],
+    },
+}
+
+
+def category_label(key):
+    """카테고리 key('experience' 등)를 한국어 라벨('경험형')로. 없으면 그대로 반환."""
+    cat = CATEGORY_POOL.get(key)
+    return cat["label"] if cat else key
+
 
 def section_label(key):
     """자기소개서 항목 key('motivation' 등)를 한국어 라벨('지원동기')로. 없으면 그대로 반환."""
@@ -241,10 +333,12 @@ def analyze_resume(resume_context, topic="면접", guidance=""):
 [해야 할 일]
 1. 이력서에서 파악한 핵심(주요 경험/기술/강점)을 2~3문장으로 간결하게 요약
 2. 이 지원자에게 가장 먼저 물어볼 면접 질문 1개 생성
-   - 자기소개서 '성장과정' 항목 내용에 초점을 맞춘 질문으로 (이후 질문에서
-     지원동기·장단점·입사 후 포부를 차례로 다루므로, 첫 질문은 성장과정에 집중)
-   - 이력서의 성장과정 관련 구체적 내용을 직접 언급해 맞춤형으로
-   - 자기소개처럼 너무 뻔하지 않게, 하지만 첫 질문답게 부담스럽지 않게
+   - '지원동기' 유형의 질문으로 한다(왜 이 직무·회사에 지원했는지, 입사 후
+     하고 싶은 일 등). 아래 씨앗 예시의 취지를 살리되 그대로 쓰지는 말 것:
+     "우리 회사(직무)에 지원한 이유는 무엇인가요?" / "왜 이 직무를 선택하셨나요?" /
+     "입사 후 하고 싶은 일은 무엇인가요?"
+   - 이력서(특히 지원동기 관련)의 구체적 내용을 직접 언급해 맞춤형으로
+   - 너무 뻔하지 않게, 하지만 첫 질문답게 부담스럽지 않게
    - 한두 문장으로 간결하게
 3. 이 자기소개서의 '진정성/성의'를 0.0~1.0 으로 평가(sincerity)
    - 면접에 진지하게 임하는 글이면 높게, 장난/불성실하면 낮게
@@ -297,16 +391,20 @@ def _coerce_sincerity(value):
 
 
 def make_question(answer_text, topic="면접", previous_questions=None,
-                  resume_context=None, guidance="", section=None, tech=False):
-    """다음 면접 질문 1개를 생성한다. 세 가지 모드가 있다(우선순위 순).
+                  resume_context=None, guidance="", section=None, tech=False,
+                  category=None):
+    """다음 면접 질문 1개를 생성한다. 네 가지 모드가 있다(우선순위 순).
 
     - 주질문 모드 (section 지정): 자기소개서의 특정 항목(예: '지원동기')에 초점을
       맞춘 핵심 질문을 만든다. 면접 앞부분에서 4개 항목을 한 번씩 모두 커버하기
       위함이다. 이 모드는 직전 답변을 파고들지 않는다.
+    - 카테고리 씨앗 모드 (category 지정): CATEGORY_POOL 의 한 카테고리(예:
+      'experience') 씨앗 질문들을 예시로 보여주고, 지원자 자소서·직무에 맞춘
+      질문 1개로 구체화한다. 씨앗 문구를 그대로 내보내지 않는다.
     - 기술 질문 모드 (tech=True): 지원 직무(topic)에 필요한 핵심 기술/지식을
       설명하게 하는 질문을 만든다(예: "백엔드 기술에 대해 설명해보세요").
-    - 꼬리질문 모드 (둘 다 없음): 지원자의 직전 답변을 깊이 파고드는 질문을
-      만든다(기존 동작). 주질문·기술 질문을 한 바퀴 돈 뒤 남는 개수만큼 호출된다.
+    - 꼬리질문 모드 (모두 없음): 지원자의 직전 답변을 깊이 파고드는 질문을
+      만든다(기존 동작).
 
     Args:
         answer_text: 지원자의 직전 답변 텍스트(꼬리질문 모드에서 핵심)
@@ -316,15 +414,20 @@ def make_question(answer_text, topic="면접", previous_questions=None,
         guidance: 질문 비중 등 추가 지침 (예: 자기소개서 항목별 비중)
         section: 주질문을 만들 자기소개서 항목 key('growth'/'motivation' 등) 또는
                  라벨. 지정되면 주질문 모드.
-        tech: True 면 직무(topic) 기반 기술 질문 모드(section 이 없을 때만 적용).
+        tech: True 면 직무(topic) 기반 기술 질문 모드(section/category 가 없을 때만).
+        category: CATEGORY_POOL 의 카테고리 key('intro'/'experience' 등). 지정되면
+                  카테고리 씨앗 모드(section 다음, tech 보다 우선).
     """
-    # Claude CLI 가 없으면 폴백: 이미 한 질문과 겹치지 않는 기본 질문을 하나 고른다
+    # Claude CLI 가 없으면 폴백: 이미 한 질문과 겹치지 않는 기본 질문을 하나 고른다.
+    # 카테고리 모드면 그 카테고리 씨앗에서 우선 고른다(폴백도 카테고리 성격 유지).
     if not _claude_available():
         asked = set(previous_questions or [])
-        for q in _FALLBACK_QUESTIONS:
+        pool = (CATEGORY_POOL.get(category, {}).get("seeds")
+                if category else None) or _FALLBACK_QUESTIONS
+        for q in pool:
             if q not in asked:
                 return q
-        return _FALLBACK_QUESTIONS[-1]
+        return pool[-1]
 
     # 이미 했던 질문 목록을 프롬프트에 포함해 중복을 방지한다
     if previous_questions:
@@ -339,6 +442,9 @@ def make_question(answer_text, topic="면접", previous_questions=None,
     if section:
         prompt = _section_question_prompt(
             section, topic, resume_block, asked_block, guidance_block)
+    elif category:
+        prompt = _category_question_prompt(
+            category, topic, resume_block, asked_block, guidance_block)
     elif tech:
         prompt = _tech_question_prompt(
             topic, resume_block, asked_block, guidance_block)
@@ -378,6 +484,46 @@ def _section_question_prompt(section, topic, resume_block, asked_block, guidance
 1. 반드시 '{label}' 항목과 직접 관련된 질문일 것(다른 항목으로 새지 말 것)
 2. 이력서에 '{label}' 관련 구체적 내용이 있으면 그 내용을 직접 언급해 맞춤형으로
 3. 이미 했던 질문과 의미가 겹치는 질문은 금지
+4. 지나치게 공격적이거나 부정적인 질문은 피할 것
+5. 실제 면접에서 사용 가능한 현실적인 질문일 것
+
+[출력 형식]
+- 질문만 출력 (부가 설명 금지)
+- 한 문장에서 두 문장, 너무 길지 않게
+- 오직 JSON 한 줄로(코드펜스·설명·머리말 절대 금지): {{"question":"<면접 질문 한 문장>"}}
+"""
+
+
+def _category_question_prompt(category, topic, resume_block, asked_block, guidance_block):
+    """카테고리 씨앗 모드 프롬프트: 카테고리 예시 질문을 씨앗으로 맞춤 질문 1개.
+
+    씨앗(예시) 문구를 그대로 내보내지 말고, 지원자 자소서·직무에 맞춰 자연스럽게
+    구체화하도록 지시한다. 이미 다룬 주제와 겹치면 같은 카테고리 안에서 다른
+    각도를 택하게 한다(중복 회피).
+    """
+    cat = CATEGORY_POOL.get(category) or {}
+    label = cat.get("label", category)
+    seeds = cat.get("seeds") or []
+    seed_lines = "\n".join(f"- {s}" for s in seeds)
+    return f"""너는 실제 기업 면접에서 사용되는 질문을 생성하는 전문 면접관 AI이다.
+목표는 지원자의 역량, 사고력, 가치관, 직무 적합성을 자연스럽게 평가하는 것이다.
+
+[면접 주제]
+{topic}
+
+{resume_block}{asked_block}{guidance_block}[이번 질문 유형]
+'{label}' 유형의 면접 질문 1개를 만들어라. 아래 '씨앗 예시'는 이 유형의 대표
+질문들이다. 이 문구를 그대로 쓰지 말고, 같은 취지를 살리되 지원자의 이력서·
+지원 직무에 맞춰 자연스럽게 구체화한 질문 1개로 새로 써라.
+
+[씨앗 예시 — 그대로 복붙 금지, 방향만 참고]
+{seed_lines}
+
+[질문 생성 규칙]
+1. 위 '{label}' 유형의 취지를 벗어나지 말 것
+2. 이력서에 관련 경험/내용이 있으면 그것을 직접 언급해 맞춤형으로
+3. 이미 했던 질문과 의미가 겹치면, 같은 유형 안에서 다른 각도를 택할 것
+   (예: 이미 장단점을 물었다면 장단점을 다시 묻지 말 것)
 4. 지나치게 공격적이거나 부정적인 질문은 피할 것
 5. 실제 면접에서 사용 가능한 현실적인 질문일 것
 
