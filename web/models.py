@@ -127,6 +127,9 @@ class InterviewRecord(db.Model):
     # 답변 내용 평가(클로드 채점) 결과 {"items":[...], "overall":"..."}.
     # 채점 실패/데모모드/구버전 기록이면 NULL.
     answer_eval = db.Column(db.JSON, nullable=True)
+    # 질문-답변 전문 [{"question": str, "answer": str}, ...]. 기록에서 실제 대화를
+    # 다시 볼 수 있게 저장한다. 구버전 기록/무응답이면 NULL.
+    qa = db.Column(db.JSON, nullable=True)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
     user = db.relationship(
@@ -145,6 +148,7 @@ class InterviewRecord(db.Model):
             "overall": self.overall,
             "scores": self.scores or [],
             "answer_eval": self.answer_eval,  # 구버전 기록/채점실패면 None
+            "qa": self.qa,  # 질문-답변 전문 (구버전 기록/무응답이면 None)
         }
 
 
@@ -152,19 +156,29 @@ def ensure_schema_migrations():
     """create_all() 이 만들지 못하는 '기존 테이블의 신규 컬럼'을 보강한다.
 
     create_all() 은 없는 테이블만 만들 뿐, 이미 있는 테이블에 컬럼을 추가하지
-    못한다. 운영 DB 에는 interview_records 가 이미 있으므로, 신규 answer_eval
-    컬럼을 idempotent 하게 ADD 한다(이미 있으면 조용히 넘어감).
+    못한다. 운영 DB 에는 interview_records 가 이미 있으므로, 신규 JSON 컬럼들을
+    idempotent 하게 ADD 한다(이미 있으면 조용히 넘어감).
     """
     from sqlalchemy import inspect, text
 
+    # (컬럼명 → ADD COLUMN DDL) — 추가할 신규 컬럼을 여기 등록한다.
+    new_cols = {
+        "answer_eval": "ALTER TABLE interview_records ADD COLUMN answer_eval JSON NULL",
+        "qa": "ALTER TABLE interview_records ADD COLUMN qa JSON NULL",
+    }
     try:
-        insp = inspect(db.engine)
-        cols = {c["name"] for c in insp.get_columns("interview_records")}
-        if "answer_eval" in cols:
-            return
-        with db.engine.begin() as conn:
-            conn.execute(text("ALTER TABLE interview_records ADD COLUMN answer_eval JSON NULL"))
-        print("[db] interview_records.answer_eval 컬럼 추가됨")
+        existing = {c["name"] for c in inspect(db.engine).get_columns("interview_records")}
     except Exception as e:
-        # 테이블이 아직 없거나(첫 실행 → create_all 이 처리) 권한 문제면 넘어간다.
-        print(f"[db] answer_eval 마이그레이션 건너뜀: {e}")
+        # 테이블이 아직 없으면(첫 실행 → create_all 이 처리) 넘어간다.
+        print(f"[db] 스키마 마이그레이션 건너뜀(테이블 없음?): {e}")
+        return
+
+    for col, ddl in new_cols.items():
+        if col in existing:
+            continue
+        try:
+            with db.engine.begin() as conn:
+                conn.execute(text(ddl))
+            print(f"[db] interview_records.{col} 컬럼 추가됨")
+        except Exception as e:
+            print(f"[db] {col} 마이그레이션 건너뜀: {e}")

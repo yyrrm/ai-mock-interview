@@ -203,6 +203,7 @@ type InterviewRecord = {
   overall: number;
   scores: { name: string; score: number }[];
   answer_eval?: AnswerEval | null; // 답변 내용 평가(구버전 기록/채점실패면 null)
+  qa?: { question: string; answer: string }[] | null; // 질문-답변 전문(구버전이면 null)
 };
 
 // 분석 채널 메타 — 이름(막대/기록) · 레이더 라벨 · 막대 색.
@@ -677,6 +678,8 @@ export default function App() {
           body: JSON.stringify({
             overall: built.overall,
             scores: built.scores.map((s) => ({ name: s.name, score: s.score })),
+            // 질문-답변 전문도 함께 저장해, 기록에서 실제 대화를 다시 볼 수 있게 한다.
+            qa: answeredQa,
           }),
         });
         if (res.ok) {
@@ -2589,12 +2592,14 @@ function ResultScreen({
 // 기록 1건 카드. 답변 내용 평가(answer_eval)가 저장돼 있으면 펼쳐서 볼 수 있다.
 function HistoryRecordCard({ record: r }: { record: InterviewRecord }) {
   const [open, setOpen] = useState(false);
+  const [qaOpen, setQaOpen] = useState(false);
   const fmtDate = (iso: string) => {
     const d = new Date(iso);
     const p = (n: number) => String(n).padStart(2, "0");
     return `${d.getFullYear()}.${p(d.getMonth() + 1)}.${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
   };
   const hasEval = !!r.answer_eval && (r.answer_eval.items?.length ?? 0) > 0;
+  const hasQa = !!r.qa && r.qa.length > 0;
 
   return (
     <div className="navy-card rounded-2xl p-5">
@@ -2651,6 +2656,31 @@ function HistoryRecordCard({ record: r }: { record: InterviewRecord }) {
                   <p className="text-xs text-muted-foreground leading-relaxed">{r.answer_eval!.overall}</p>
                 </div>
               )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {hasQa && (
+        <div className="mt-4 pt-4 border-t border-[hsl(var(--border))]">
+          <button
+            onClick={() => setQaOpen((v) => !v)}
+            className="text-xs font-semibold text-[hsl(var(--accent))] hover:underline"
+          >
+            {qaOpen ? "대화 다시보기 접기 ▲" : "대화 다시보기 ▼"}
+          </button>
+          {qaOpen && (
+            <div className="mt-3 space-y-3">
+              {r.qa!.map((pair, i) => (
+                <div key={i} className="rounded-lg bg-[hsl(var(--secondary))] p-3">
+                  <p className="text-xs font-semibold text-[hsl(var(--primary))] mb-1">
+                    Q{i + 1}. {pair.question}
+                  </p>
+                  <p className="text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap">
+                    {pair.answer || "(무응답)"}
+                  </p>
+                </div>
+              ))}
             </div>
           )}
         </div>

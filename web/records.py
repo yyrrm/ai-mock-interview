@@ -15,6 +15,27 @@ records_bp = Blueprint("records", __name__)
 MAX_SCORE_ITEMS = 20  # 점수 항목 개수 상한 (악의적 대량 입력 방지)
 MAX_EVAL_ITEMS = 10        # answer_eval 항목 개수 상한
 MAX_EVAL_TEXT = 1000       # answer_eval 코멘트/종합 텍스트 길이 상한
+MAX_QA_PAIRS = 15          # 저장할 질문-답변 쌍 개수 상한
+MAX_QA_TEXT = 4000         # 질문/답변 1개 길이 상한 (DB 비대화·악용 방지)
+
+
+def _clean_qa(raw):
+    """질문-답변 전문 페이로드를 검증·정규화한다.
+
+    구조: [{"question": str, "answer": str}, ...]
+    없거나 비면 None(저장 안 함 — 선택 필드). 길이/개수 상한을 적용한다.
+    """
+    if not isinstance(raw, list) or not raw:
+        return None
+    pairs = []
+    for it in raw[:MAX_QA_PAIRS]:
+        if not isinstance(it, dict):
+            continue
+        q = str(it.get("question", "")).strip()[:MAX_QA_TEXT]
+        a = str(it.get("answer", "")).strip()[:MAX_QA_TEXT]
+        if q or a:
+            pairs.append({"question": q, "answer": a})
+    return pairs or None
 
 
 def _clean_answer_eval(raw):
@@ -95,10 +116,13 @@ def create_record():
 
     # 답변 내용 평가(선택). 없거나 형식이 틀리면 None 으로 저장(채점 실패/구버전).
     answer_eval = _clean_answer_eval(data.get("answer_eval"))
+    # 질문-답변 전문(선택). 기록에서 실제 대화를 다시 볼 수 있게 저장.
+    qa = _clean_qa(data.get("qa"))
 
     try:
         rec = InterviewRecord(
-            user_id=user.id, overall=overall, scores=cleaned, answer_eval=answer_eval
+            user_id=user.id, overall=overall, scores=cleaned,
+            answer_eval=answer_eval, qa=qa,
         )
         db.session.add(rec)
         db.session.commit()
