@@ -17,10 +17,9 @@ const QUESTIONS = [
 ];
 
 // 한 번의 면접에서 진행할 질문 개수 (AI가 동적으로 생성).
-// 사용자가 면접 준비 화면에서 아래 후보 중 하나를 고른다.
-// 최소 7개인 이유: 자기소개서 4문항 주질문 + 직무 기술 질문 1개 = 5개가
-// 고정으로 들어가므로, 그 뒤 꼬리질문이 최소 2개는 나오도록 7부터 시작한다.
-const QUESTION_COUNT_OPTIONS = [7, 10, 15] as const;
+// 사용자가 면접 준비 화면에서 7 또는 10 중 하나를 고른다.
+// 구성은 buildQuestionPlan() 참고(첫=지원동기 고정, 끝=마지막 말 고정).
+const QUESTION_COUNT_OPTIONS = [7, 10] as const;
 const DEFAULT_QUESTION_COUNT = 7;
 
 // 자기소개서 문항 (백엔드 COVER_LETTER_SECTIONS 와 key 일치)
@@ -31,16 +30,55 @@ const COVER_SECTIONS = [
   { key: "aspiration", label: "입사 후 포부", placeholder: "입사 후 이루고 싶은 목표와 성장 계획" },
 ] as const;
 
-// 면접 앞부분에서 '주질문'으로 한 번씩 모두 커버할 자기소개서 항목 순서.
-// 첫 질문(자기소개서 분석으로 생성)을 'growth' 슬롯으로 보고, 나머지 항목은
-// nextQuestion 이 순서대로 section 을 지정해 주질문을 만든다.
-const SECTION_ORDER = ["growth", "motivation", "strength_weakness", "aspiration"] as const;
+// 자소서 주질문에 쓸 항목 순서(첫 질문=지원동기는 별도 고정이므로 여기서 제외).
+// 10문항은 자소서 주질문 2개가 필요하므로 앞에서부터 그만큼 사용한다.
+const SECTION_ORDER = ["motivation", "strength_weakness", "aspiration", "growth"] as const;
 
-// 질문 진행 순서(0-based 인덱스):
-//   0~3 : 자기소개서 4항목 주질문 (SECTION_ORDER)
-//   4   : 직무 기술 질문 1개 (예: "백엔드 기술에 대해 설명해보세요")
-//   5~  : 직전 답변을 파고드는 꼬리질문
-const TECH_QUESTION_INDEX = SECTION_ORDER.length; // = 4
+// 카테고리 풀에서 '랜덤 선택' 대상이 되는 카테고리들(백엔드 CATEGORY_POOL key와 일치).
+// 사용자 명세의 {1 자기소개, 3 경험, 5 프로젝트, 6 인성, 7 상황대처}.
+// 2(지원동기)=첫 질문 고정, 4(직무지식)=tech 슬롯, 8(마지막)=closing 으로 별도 처리.
+const CATEGORY_POOL_KEYS = ["intro", "experience", "project", "personality", "situation"] as const;
+
+// 한 면접의 질문 한 칸(슬롯)이 어떤 종류인지. nextQuestion 이 이 종류를 보고
+// /api/question 에 보낼 인자(section/category/tech)를 정한다.
+type QuestionSlot =
+  | { kind: "first" }                          // 첫 질문(지원동기) — /api/cover-letter 가 생성, 플랜 자리표시용
+  | { kind: "section"; section: string }       // 자소서 항목 주질문
+  | { kind: "category"; category: string }     // 카테고리 풀 씨앗 질문
+  | { kind: "tech" }                           // 직무·전공 지식
+  | { kind: "followup" }                       // 직전 답변 꼬리질문
+  | { kind: "closing" };                       // 마지막 말(카테고리 8)
+
+// 배열을 섞은 새 배열을 돌려준다(Fisher–Yates). 원본은 건드리지 않는다.
+function shuffled<T>(arr: readonly T[]): T[] {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// 면접 시작 시 1회 호출해 질문 슬롯 플랜(인덱스별 종류)을 만든다.
+// 카테고리 풀 선택은 여기서 한 번 확정해 같은 면접 내내 고정된다.
+//
+// 7문항:  [지원동기, 자소서1, 풀a, 풀b, 직무지식, 꼬리, 마지막말]
+// 10문항: [지원동기, 자소서1, 자소서2, 풀a, 풀b, 풀c, 풀d, 직무지식, 꼬리, 마지막말]
+function buildQuestionPlan(count: number): QuestionSlot[] {
+  const isTen = count >= 10;
+  const sectionCount = isTen ? 2 : 1;        // 자소서 주질문 개수
+  const poolCount = isTen ? 4 : 2;           // 카테고리 풀 질문 개수
+  const sections = SECTION_ORDER.slice(0, sectionCount);
+  const pool = shuffled(CATEGORY_POOL_KEYS).slice(0, poolCount);
+
+  const plan: QuestionSlot[] = [{ kind: "first" }];
+  for (const s of sections) plan.push({ kind: "section", section: s });
+  for (const c of pool) plan.push({ kind: "category", category: c });
+  plan.push({ kind: "tech" });
+  plan.push({ kind: "followup" });
+  plan.push({ kind: "closing" });
+  return plan;
+}
 
 type CoverSections = Record<string, string>;
 
@@ -281,6 +319,9 @@ export default function App() {
   // 매칭하기 위함. answersRef 는 무응답을 건너뛰어 push 하므로 인덱스가 밀린다 →
   // 채점에는 이 맵을 쓴다(무응답 질문은 빈 답으로 남아 정렬이 어긋나지 않는다).
   const qaRef = useRef<Record<number, string>>({});
+  // 이번 면접의 질문 슬롯 플랜(인덱스별 종류). goToInterview 에서 1회 생성해
+  // nextQuestion 이 인덱스로 조회한다. 카테고리 풀 선택도 여기서 고정된다.
+  const planRef = useRef<QuestionSlot[]>([]);
   const sessionIdRef = useRef<string>("");
   // 비동기 채점이 컴포넌트 언마운트 후 setState 하는 것을 막는 가드.
   const mountedRef = useRef(true);
@@ -469,6 +510,7 @@ export default function App() {
     setBusy(true);
     setTopic(jobTopic); // 꼬리 질문(nextQuestion)에서도 같은 주제를 쓰도록 저장
     setTargetQuestions(count); // 종료 판정·진행 표시에 사용
+    planRef.current = buildQuestionPlan(count); // 이번 면접 질문 플랜 확정(카테고리 풀 고정)
     let firstQ = QUESTIONS[0];
     let rt = "";
     let gd = "";
@@ -515,15 +557,19 @@ export default function App() {
       // 방금 답한 질문(currentQ)에 답변을 매핑 — 채점 시 질문↔답변 정렬용.
       qaRef.current[currentQ] = spokenAnswer.trim();
     }
-    // 다음 질문의 종류를 0-based 인덱스(questions.length)로 결정한다.
-    //   인덱스 0~3 : 자기소개서 항목 '주질문'. 인덱스 0(첫 질문)은 goToInterview
-    //               에서 이미 SECTION_ORDER[0](성장과정)로 만들었으므로, 여기서는
-    //               인덱스 1..3 이 나머지 항목 주질문이 된다.
-    //   인덱스 4   : 직무 기술 질문(tech).
-    //   인덱스 5~  : 직전 답변을 파고드는 꼬리질문(section/tech 모두 없음).
+    // 다음 질문의 종류를 슬롯 플랜(planRef)에서 0-based 인덱스로 가져온다.
+    // 인덱스 0(첫 질문=지원동기)은 goToInterview 가 /api/cover-letter 로 이미
+    // 만들었으므로, 여기서는 인덱스 1 이상(questions.length)을 처리한다.
+    // 플랜이 없거나 범위를 벗어나면 안전하게 꼬리질문으로 동작한다.
     const nextIndex = questions.length;
-    const section = SECTION_ORDER[nextIndex]; // 4 이상이면 undefined
-    const tech = nextIndex === TECH_QUESTION_INDEX;
+    const slot = planRef.current[nextIndex] ?? { kind: "followup" as const };
+    // 슬롯 종류 → /api/question 인자(section/category/tech)로 변환.
+    const section = slot.kind === "section" ? slot.section : "";
+    // 'category' 슬롯은 그 카테고리를, 'closing' 슬롯은 마지막 말(카테고리 8)을 보낸다.
+    const category =
+      slot.kind === "category" ? slot.category :
+      slot.kind === "closing" ? "closing" : "";
+    const tech = slot.kind === "tech";
     let nextQ = QUESTIONS[questions.length % QUESTIONS.length];
     try {
       const res = await fetch("/api/question", {
@@ -535,8 +581,9 @@ export default function App() {
           previous_questions: asked,
           resume_context: resumeText,
           guidance,
-          section: section ?? "", // 주질문이면 항목 key, 아니면 빈 문자열
-          tech,                   // true 면 직무 기술 질문
+          section,   // 자소서 주질문이면 항목 key, 아니면 빈 문자열
+          category,  // 카테고리/마지막말이면 카테고리 key, 아니면 빈 문자열
+          tech,      // true 면 직무 기술 질문
         }),
       });
       const data = await res.json();
