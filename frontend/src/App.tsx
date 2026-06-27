@@ -7,7 +7,12 @@ import { TERMS_OF_SERVICE, PRIVACY_POLICY } from "./legalText";
 
 type Screen = "home" | "prep" | "interview" | "result" | "history";
 
-// API 호출 실패(키 미설정/네트워크 오류) 시 사용하는 폴백 질문
+// 첫 질문(지원동기)은 백엔드에서 고정 문장으로 박제된다(modules/question fixed_first_question).
+// /api/cover-letter 호출이 실패했을 때만 쓰는 프론트 폴백 — 백엔드 고정 질문과 같은 취지(지원동기)로 맞춘다.
+const FIRST_QUESTION_FALLBACK =
+  "먼저 지원동기가 궁금합니다. 이 직무·회사에 지원하신 이유와, 입사 후 이루고 싶은 목표를 말씀해 주세요.";
+
+// API 호출 실패(키 미설정/네트워크 오류) 시 사용하는 폴백 질문(2번째 이후 질문용)
 const QUESTIONS = [
   "자기소개를 간단히 해주세요. 본인의 강점과 지원 동기를 중심으로 말씀해 주세요.",
   "본인이 경험한 가장 도전적인 프로젝트는 무엇이었나요? 어떻게 해결하셨나요?",
@@ -514,7 +519,7 @@ export default function App() {
     setTopic(jobTopic); // 꼬리 질문(nextQuestion)에서도 같은 주제를 쓰도록 저장
     setTargetQuestions(count); // 종료 판정·진행 표시에 사용
     planRef.current = buildQuestionPlan(count); // 이번 면접 질문 플랜 확정(카테고리 풀 고정)
-    let firstQ = QUESTIONS[0];
+    let firstQ = FIRST_QUESTION_FALLBACK; // 백엔드 응답 실패 시에도 첫 질문은 지원동기
     let rt = "";
     let gd = "";
     try {
@@ -1939,7 +1944,10 @@ function InterviewScreen({
         });
         if (res.ok) {
           const url = URL.createObjectURL(await res.blob());
-          const audio = new Audio(url);
+          const audio = new Audio();
+          // 전체 mp3 를 디코드할 준비가 될 때까지 기다리도록 preload 강제.
+          audio.preload = "auto";
+          audio.src = url;
           audioRef.current = audio;
           audio.onplay = () => setSpeaking(true);
           const done = () => {
@@ -1949,11 +1957,33 @@ function InterviewScreen({
           };
           audio.onended = done;
           audio.onerror = done;
+
+          // 모바일에서 로드 완료 전에 play() 하면 앞부분이 잘려 '중간부터' 들린다.
+          // canplaythrough(전체 재생 가능) 를 기다린 뒤 재생한다. 이벤트가 안 오는
+          // 기기를 대비해 짧은 타임아웃 가드를 두고, 그래도 안 오면 그냥 재생한다.
+          await new Promise<void>((resolve) => {
+            let settled = false;
+            const go = () => {
+              if (settled) return;
+              settled = true;
+              clearTimeout(timer);
+              resolve();
+            };
+            const timer = setTimeout(go, 1500);
+            audio.addEventListener("canplaythrough", go, { once: true });
+            audio.load();
+          });
+
+          // 이 사이에 다음 질문/언마운트로 교체됐으면 재생하지 않는다.
+          if (audioRef.current !== audio) {
+            URL.revokeObjectURL(url);
+            return;
+          }
           await audio.play();
           return;
         }
       } catch {
-        /* 서버/네트워크 오류 → 아래 브라우저 TTS 폴백 */
+        /* 서버/네트워크 오류·재생 거부 → 아래 브라우저 TTS 폴백 */
       }
       speakKoBrowser(text, () => setSpeaking(true), () => setSpeaking(false));
     },
@@ -2006,20 +2036,21 @@ function InterviewScreen({
   return (
     <div className="min-h-screen flex flex-col bg-[hsl(222,47%,8%)] screen-enter">
       {/* Top bar */}
-      <div className="flex items-center justify-between px-6 py-3 border-b border-white/10">
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 bg-red-500/20 border border-red-500/30 px-3 py-1.5 rounded-full">
+      <div className="flex items-center justify-between gap-2 px-3 sm:px-6 py-3 border-b border-white/10">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+          <div className="flex items-center gap-2 bg-red-500/20 border border-red-500/30 px-2.5 sm:px-3 py-1.5 rounded-full shrink-0">
             <span className="w-2 h-2 rounded-full bg-red-500 recording-dot" />
-            <span className="text-red-300 text-xs font-semibold">녹화 중</span>
+            <span className="text-red-300 text-xs font-semibold whitespace-nowrap">녹화 중</span>
           </div>
           <div className="text-white/60 text-sm font-mono">{timer}</div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <span className="text-white/60 text-sm">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-white/60 text-sm whitespace-nowrap">
             {questionIndex + 1} / {totalQuestions}
           </span>
-          <div className="flex gap-1">
+          {/* 진행 점 바는 좁은 화면에서 가로로 넘치므로 sm 이상에서만 표시 */}
+          <div className="hidden sm:flex gap-1">
             {Array.from({ length: totalQuestions }).map((_, i) => (
               <div
                 key={i}
@@ -2034,16 +2065,17 @@ function InterviewScreen({
         <button
           data-testid="button-feedback-toggle"
           onClick={onToggleFeedback}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all duration-200 ${
+          className={`flex items-center gap-2 px-2.5 sm:px-4 py-2 rounded-xl text-sm font-semibold shrink-0 transition-all duration-200 ${
             feedbackOpen
               ? "bg-[hsl(var(--accent))] text-white shadow-lg"
               : "bg-white/10 text-white/80 hover:bg-white/15"
           }`}
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" className="shrink-0">
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
           </svg>
-          실시간 피드백
+          {/* 라벨은 모바일에서 숨겨 헤더 폭을 확보(아이콘만 노출) */}
+          <span className="hidden sm:inline whitespace-nowrap">실시간 피드백</span>
           {feedbackOpen && (
             <span className="w-4 h-4 rounded-full bg-white/20 text-[10px] flex items-center justify-center">
               {liveFeedback.length}
@@ -2052,11 +2084,11 @@ function InterviewScreen({
         </button>
       </div>
 
-      {/* Main content */}
-      <div className="flex-1 flex gap-0 overflow-hidden">
-        {/* Left 70% */}
-        <div className="flex-[7] flex flex-col p-6 gap-5">
-          <div className="order-2 flex-[5] min-h-0 rounded-2xl border border-white/10 bg-[hsl(222,47%,12%)] overflow-y-auto relative flex flex-col items-center justify-center gap-4 py-4 shadow-xl">
+      {/* Main content — 모바일: 세로 스택(스크롤), 데스크톱(lg): 좌70/우30 가로 분할 */}
+      <div className="flex-1 flex flex-col lg:flex-row gap-0 overflow-y-auto lg:overflow-hidden">
+        {/* Left 70% (데스크톱) / 두 번째 블록(모바일) */}
+        <div className="order-2 lg:order-1 lg:flex-[7] flex flex-col p-4 sm:p-6 gap-4 sm:gap-5">
+          <div className="order-2 lg:flex-[5] min-h-[320px] lg:min-h-0 rounded-2xl border border-white/10 bg-[hsl(222,47%,12%)] overflow-y-auto relative flex flex-col items-center justify-center gap-4 py-4 shadow-xl">
             <div
               className="absolute inset-0 opacity-5"
               style={{
@@ -2145,23 +2177,23 @@ function InterviewScreen({
             </div>
           </div>
 
-          <div className="order-1 flex-[3] min-h-0 overflow-auto rounded-2xl border border-white/10 bg-[hsl(222,47%,15%)] p-6 shadow-lg">
+          <div className="order-1 lg:flex-[3] min-h-0 overflow-auto rounded-2xl border border-white/10 bg-[hsl(222,47%,15%)] p-4 sm:p-6 shadow-lg">
             <div className="flex items-center gap-2 mb-3">
-              <div className="w-6 h-6 rounded-lg bg-[hsl(var(--accent))] flex items-center justify-center">
+              <div className="w-6 h-6 rounded-lg bg-[hsl(var(--accent))] flex items-center justify-center shrink-0">
                 <span className="text-white text-xs font-bold">Q</span>
               </div>
-              <span className="text-white/60 text-base">질문 {questionIndex + 1}</span>
+              <span className="text-white/60 text-sm sm:text-base">질문 {questionIndex + 1}</span>
             </div>
-            <p key={questionIndex} className="text-white text-2xl leading-relaxed font-medium screen-enter">
+            <p key={questionIndex} className="text-white text-lg sm:text-xl lg:text-2xl leading-relaxed font-medium break-keep screen-enter">
               {busy ? "다음 질문을 생성하는 중입니다..." : question}
             </p>
           </div>
         </div>
 
-        {/* Right 30% */}
-        <div className="flex-[3] flex flex-col p-4 pl-0 gap-4">
+        {/* Right 30% (데스크톱) / 맨 위 웹캠 블록(모바일) */}
+        <div className="order-1 lg:order-2 lg:flex-[3] flex flex-col p-4 lg:pl-0 gap-4">
           <div
-            className="rounded-2xl overflow-hidden border border-white/10 shadow-xl relative"
+            className="rounded-2xl overflow-hidden border border-white/10 shadow-xl relative w-full max-w-md mx-auto lg:max-w-none"
             style={{ aspectRatio: "4/3" }}
           >
             <div className="webcam-placeholder w-full h-full">
@@ -2219,29 +2251,27 @@ function InterviewScreen({
         </div>
       </div>
 
-      {/* Bottom controls */}
-      <div className="px-6 py-4 border-t border-white/10 flex items-center justify-between gap-4">
-        <div className="text-white/40 text-sm">답변 후 '다음' 버튼을 눌러 진행하세요</div>
-        <div className="flex items-center gap-3">
-          <button
-            data-testid="button-end-interview"
-            onClick={onEnd}
-            className="px-5 py-3 rounded-xl border border-red-500/30 text-red-400 text-sm font-semibold hover:bg-red-500/10 transition-colors"
-          >
-            면접 종료
-          </button>
-          <button
-            data-testid="button-next-question"
-            onClick={onNext}
-            disabled={busy}
-            className="px-6 py-3 rounded-xl navy-gradient text-white text-sm font-bold shadow-lg hover:scale-105 active:scale-100 transition-all duration-150 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
-          >
-            {busy ? "생성 중..." : isLast ? "면접 완료" : "다음 질문"}
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <path d="m9 18 6-6-6-6"/>
-            </svg>
-          </button>
-        </div>
+      {/* Bottom controls — 모바일: 안내문 숨기고 버튼이 가로폭을 균등 분할, 데스크톱: 우측 정렬 */}
+      <div className="px-3 sm:px-6 py-3 sm:py-4 border-t border-white/10 flex items-center justify-end gap-3">
+        <div className="hidden md:block text-white/40 text-sm mr-auto">답변 후 '다음' 버튼을 눌러 진행하세요</div>
+        <button
+          data-testid="button-end-interview"
+          onClick={onEnd}
+          className="flex-1 sm:flex-none px-4 sm:px-5 py-3 rounded-xl border border-red-500/30 text-red-400 text-sm font-semibold whitespace-nowrap hover:bg-red-500/10 transition-colors"
+        >
+          면접 종료
+        </button>
+        <button
+          data-testid="button-next-question"
+          onClick={onNext}
+          disabled={busy}
+          className="flex-1 sm:flex-none px-4 sm:px-6 py-3 rounded-xl navy-gradient text-white text-sm font-bold shadow-lg hover:scale-105 active:scale-100 transition-all duration-150 flex items-center justify-center gap-2 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
+        >
+          {busy ? "생성 중..." : isLast ? "면접 완료" : "다음 질문"}
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="shrink-0">
+            <path d="m9 18 6-6-6-6"/>
+          </svg>
+        </button>
       </div>
     </div>
   );
