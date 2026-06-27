@@ -121,12 +121,23 @@ COVER_LETTER_SECTIONS = [
     {"key": "aspiration", "label": "입사 후 포부", "weight": "normal"},
 ]
 
-# 자기소개서 기반 질문 생성 시 모델에 주는 비중 가이드
+# 자기소개서 기반 질문 생성 시 모델에 주는 비중 가이드.
+# 주질문(섹션별 1개씩)은 4문항을 모두 균형 있게 커버하고, 꼬리질문(직전 답변
+# 파고들기)에서만 성장과정 비중을 낮춘다.
 COVER_LETTER_GUIDANCE = (
     "이 지원자는 자기소개서를 [성장과정, 지원동기, 자신의 장단점, 입사 후 포부] "
-    "항목으로 작성했다. 질문은 지원동기·자신의 장단점·입사 후 포부와 직무 역량에 "
-    "집중하고, 성장과정에 관한 질문은 비중을 낮춰 가끔만(전체 질문 중 일부만) 다뤄라."
+    "항목으로 작성했다. 자기소개서 4개 항목을 한 번씩 모두 다룬 뒤, 추가(꼬리) "
+    "질문은 지원동기·자신의 장단점·입사 후 포부와 직무 역량에 집중하고 성장과정은 "
+    "거의 다루지 마라."
 )
+
+
+def section_label(key):
+    """자기소개서 항목 key('motivation' 등)를 한국어 라벨('지원동기')로. 없으면 그대로 반환."""
+    for sec in COVER_LETTER_SECTIONS:
+        if sec["key"] == key:
+            return sec["label"]
+    return key
 
 
 def build_cover_letter_text(sections):
@@ -230,7 +241,9 @@ def analyze_resume(resume_context, topic="면접", guidance=""):
 [해야 할 일]
 1. 이력서에서 파악한 핵심(주요 경험/기술/강점)을 2~3문장으로 간결하게 요약
 2. 이 지원자에게 가장 먼저 물어볼 면접 질문 1개 생성
-   - 이력서의 구체적인 경험/기술을 직접 언급해 맞춤형으로
+   - 자기소개서 '성장과정' 항목 내용에 초점을 맞춘 질문으로 (이후 질문에서
+     지원동기·장단점·입사 후 포부를 차례로 다루므로, 첫 질문은 성장과정에 집중)
+   - 이력서의 성장과정 관련 구체적 내용을 직접 언급해 맞춤형으로
    - 자기소개처럼 너무 뻔하지 않게, 하지만 첫 질문답게 부담스럽지 않게
    - 한두 문장으로 간결하게
 3. 이 자기소개서의 '진정성/성의'를 0.0~1.0 으로 평가(sincerity)
@@ -283,15 +296,27 @@ def _coerce_sincerity(value):
     return f
 
 
-def make_question(answer_text, topic="면접", previous_questions=None, resume_context=None, guidance=""):
-    """지원자의 직전 답변(과 이력서)을 바탕으로 다음 면접 질문을 생성한다.
+def make_question(answer_text, topic="면접", previous_questions=None,
+                  resume_context=None, guidance="", section=None, tech=False):
+    """다음 면접 질문 1개를 생성한다. 세 가지 모드가 있다(우선순위 순).
+
+    - 주질문 모드 (section 지정): 자기소개서의 특정 항목(예: '지원동기')에 초점을
+      맞춘 핵심 질문을 만든다. 면접 앞부분에서 4개 항목을 한 번씩 모두 커버하기
+      위함이다. 이 모드는 직전 답변을 파고들지 않는다.
+    - 기술 질문 모드 (tech=True): 지원 직무(topic)에 필요한 핵심 기술/지식을
+      설명하게 하는 질문을 만든다(예: "백엔드 기술에 대해 설명해보세요").
+    - 꼬리질문 모드 (둘 다 없음): 지원자의 직전 답변을 깊이 파고드는 질문을
+      만든다(기존 동작). 주질문·기술 질문을 한 바퀴 돈 뒤 남는 개수만큼 호출된다.
 
     Args:
-        answer_text: 지원자의 직전 답변 텍스트
+        answer_text: 지원자의 직전 답변 텍스트(꼬리질문 모드에서 핵심)
         topic: 면접 주제 (예: "백엔드 개발", "신입 공채")
         previous_questions: 지금까지 이미 물어본 질문 리스트(중복 방지용)
         resume_context: 지원자 이력서에서 추출한 텍스트(있으면 맞춤형 질문에 활용)
         guidance: 질문 비중 등 추가 지침 (예: 자기소개서 항목별 비중)
+        section: 주질문을 만들 자기소개서 항목 key('growth'/'motivation' 등) 또는
+                 라벨. 지정되면 주질문 모드.
+        tech: True 면 직무(topic) 기반 기술 질문 모드(section 이 없을 때만 적용).
     """
     # Claude CLI 가 없으면 폴백: 이미 한 질문과 겹치지 않는 기본 질문을 하나 고른다
     if not _claude_available():
@@ -311,7 +336,90 @@ def make_question(answer_text, topic="면접", previous_questions=None, resume_c
     resume_block = _resume_block(resume_context)
     guidance_block = f"[추가 지침]\n{guidance}\n\n" if guidance else ""
 
-    prompt = f"""너는 실제 기업 면접에서 사용되는 질문을 생성하는 전문 면접관 AI이다.
+    if section:
+        prompt = _section_question_prompt(
+            section, topic, resume_block, asked_block, guidance_block)
+    elif tech:
+        prompt = _tech_question_prompt(
+            topic, resume_block, asked_block, guidance_block)
+    else:
+        prompt = _followup_question_prompt(
+            answer_text, topic, resume_block, asked_block, guidance_block)
+
+    try:
+        data = _run_claude(prompt, json_mode=True)
+        q = str(data.get("question", "")).strip()
+        if not q:
+            raise ValueError("empty question")
+        return q
+    except Exception as e:
+        print("질문 생성 오류:", e)
+        asked = set(previous_questions or [])
+        for q in _FALLBACK_QUESTIONS:
+            if q not in asked:
+                return q
+        return _FALLBACK_QUESTIONS[-1]
+
+
+def _section_question_prompt(section, topic, resume_block, asked_block, guidance_block):
+    """주질문 모드 프롬프트: 자기소개서 특정 항목에 초점을 맞춘 핵심 질문 1개."""
+    label = section_label(section)
+    return f"""너는 실제 기업 면접에서 사용되는 질문을 생성하는 전문 면접관 AI이다.
+목표는 지원자의 역량, 사고력, 가치관, 직무 적합성을 자연스럽게 평가하는 것이다.
+
+[면접 주제]
+{topic}
+
+{resume_block}{asked_block}{guidance_block}[이번 질문 지시]
+지원자의 자기소개서 '{label}' 항목 내용을 바탕으로, 그 항목에 초점을 맞춘
+핵심 면접 질문 1개를 만들어라.
+
+[질문 생성 규칙]
+1. 반드시 '{label}' 항목과 직접 관련된 질문일 것(다른 항목으로 새지 말 것)
+2. 이력서에 '{label}' 관련 구체적 내용이 있으면 그 내용을 직접 언급해 맞춤형으로
+3. 이미 했던 질문과 의미가 겹치는 질문은 금지
+4. 지나치게 공격적이거나 부정적인 질문은 피할 것
+5. 실제 면접에서 사용 가능한 현실적인 질문일 것
+
+[출력 형식]
+- 질문만 출력 (부가 설명 금지)
+- 한 문장에서 두 문장, 너무 길지 않게
+- 오직 JSON 한 줄로(코드펜스·설명·머리말 절대 금지): {{"question":"<면접 질문 한 문장>"}}
+"""
+
+
+def _tech_question_prompt(topic, resume_block, asked_block, guidance_block):
+    """기술 질문 모드 프롬프트: 지원 직무에 필요한 핵심 기술/지식 설명 질문 1개."""
+    return f"""너는 실제 기업 면접에서 사용되는 질문을 생성하는 전문 면접관 AI이다.
+목표는 지원자가 지원 직무에 필요한 기술/지식을 제대로 이해하고 있는지 평가하는 것이다.
+
+[면접 주제(지원 직무)]
+{topic}
+
+{resume_block}{asked_block}{guidance_block}[이번 질문 지시]
+위 '지원 직무'에 핵심이 되는 기술·개념·도구 중 하나를 골라, 지원자가 그것을
+직접 설명하도록 하는 기술 질문 1개를 만들어라.
+- 예) 백엔드 직무 → "REST API와 RPC의 차이를 설명해보세요.",
+      데이터 분석 직무 → "정규화와 표준화의 차이를 설명해보세요."
+- 직무가 명확하지 않거나 '면접'처럼 일반적이면, 이력서에 드러난 기술/도구 중
+  하나를 골라 설명을 요구하라. 그것도 없으면 직무 일반의 기초 개념을 묻는다.
+
+[질문 생성 규칙]
+1. 단순 경험담이 아니라 '개념/원리를 설명'하게 하는 질문일 것
+2. 신입에게도 과하지 않은, 해당 직무의 기본~핵심 수준일 것
+3. 이미 했던 질문과 의미가 겹치는 질문은 금지
+4. 실제 면접에서 사용 가능한 현실적인 질문일 것
+
+[출력 형식]
+- 질문만 출력 (부가 설명 금지)
+- 한 문장에서 두 문장, 너무 길지 않게
+- 오직 JSON 한 줄로(코드펜스·설명·머리말 절대 금지): {{"question":"<면접 질문 한 문장>"}}
+"""
+
+
+def _followup_question_prompt(answer_text, topic, resume_block, asked_block, guidance_block):
+    """꼬리질문 모드 프롬프트: 지원자의 직전 답변을 깊이 파고드는 질문 1개."""
+    return f"""너는 실제 기업 면접에서 사용되는 질문을 생성하는 전문 면접관 AI이다.
 목표는 지원자의 역량, 사고력, 기술, 의사소통 능력을 자연스럽게 평가하는 것이다.
 
 [면접 주제]
@@ -343,20 +451,6 @@ def make_question(answer_text, topic="면접", previous_questions=None, resume_c
 - 한 문장에서 두 문장, 너무 길지 않게
 - 오직 JSON 한 줄로(코드펜스·설명·머리말 절대 금지): {{"question":"<면접 질문 한 문장>"}}
 """
-
-    try:
-        data = _run_claude(prompt, json_mode=True)
-        q = str(data.get("question", "")).strip()
-        if not q:
-            raise ValueError("empty question")
-        return q
-    except Exception as e:
-        print("질문 생성 오류:", e)
-        asked = set(previous_questions or [])
-        for q in _FALLBACK_QUESTIONS:
-            if q not in asked:
-                return q
-        return _FALLBACK_QUESTIONS[-1]
 
 
 # ── 답변 내용 평가 ─────────────────────────────────────────────────

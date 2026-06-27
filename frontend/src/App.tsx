@@ -18,8 +18,10 @@ const QUESTIONS = [
 
 // 한 번의 면접에서 진행할 질문 개수 (AI가 동적으로 생성).
 // 사용자가 면접 준비 화면에서 아래 후보 중 하나를 고른다.
-const QUESTION_COUNT_OPTIONS = [5, 10, 15] as const;
-const DEFAULT_QUESTION_COUNT = 5;
+// 최소 7개인 이유: 자기소개서 4문항 주질문 + 직무 기술 질문 1개 = 5개가
+// 고정으로 들어가므로, 그 뒤 꼬리질문이 최소 2개는 나오도록 7부터 시작한다.
+const QUESTION_COUNT_OPTIONS = [7, 10, 15] as const;
+const DEFAULT_QUESTION_COUNT = 7;
 
 // 자기소개서 문항 (백엔드 COVER_LETTER_SECTIONS 와 key 일치)
 const COVER_SECTIONS = [
@@ -28,6 +30,17 @@ const COVER_SECTIONS = [
   { key: "strength_weakness", label: "자신의 장단점", placeholder: "강점과 약점, 그리고 개선 노력" },
   { key: "aspiration", label: "입사 후 포부", placeholder: "입사 후 이루고 싶은 목표와 성장 계획" },
 ] as const;
+
+// 면접 앞부분에서 '주질문'으로 한 번씩 모두 커버할 자기소개서 항목 순서.
+// 첫 질문(자기소개서 분석으로 생성)을 'growth' 슬롯으로 보고, 나머지 항목은
+// nextQuestion 이 순서대로 section 을 지정해 주질문을 만든다.
+const SECTION_ORDER = ["growth", "motivation", "strength_weakness", "aspiration"] as const;
+
+// 질문 진행 순서(0-based 인덱스):
+//   0~3 : 자기소개서 4항목 주질문 (SECTION_ORDER)
+//   4   : 직무 기술 질문 1개 (예: "백엔드 기술에 대해 설명해보세요")
+//   5~  : 직전 답변을 파고드는 꼬리질문
+const TECH_QUESTION_INDEX = SECTION_ORDER.length; // = 4
 
 type CoverSections = Record<string, string>;
 
@@ -502,6 +515,15 @@ export default function App() {
       // 방금 답한 질문(currentQ)에 답변을 매핑 — 채점 시 질문↔답변 정렬용.
       qaRef.current[currentQ] = spokenAnswer.trim();
     }
+    // 다음 질문의 종류를 0-based 인덱스(questions.length)로 결정한다.
+    //   인덱스 0~3 : 자기소개서 항목 '주질문'. 인덱스 0(첫 질문)은 goToInterview
+    //               에서 이미 SECTION_ORDER[0](성장과정)로 만들었으므로, 여기서는
+    //               인덱스 1..3 이 나머지 항목 주질문이 된다.
+    //   인덱스 4   : 직무 기술 질문(tech).
+    //   인덱스 5~  : 직전 답변을 파고드는 꼬리질문(section/tech 모두 없음).
+    const nextIndex = questions.length;
+    const section = SECTION_ORDER[nextIndex]; // 4 이상이면 undefined
+    const tech = nextIndex === TECH_QUESTION_INDEX;
     let nextQ = QUESTIONS[questions.length % QUESTIONS.length];
     try {
       const res = await fetch("/api/question", {
@@ -513,6 +535,8 @@ export default function App() {
           previous_questions: asked,
           resume_context: resumeText,
           guidance,
+          section: section ?? "", // 주질문이면 항목 key, 아니면 빈 문자열
+          tech,                   // true 면 직무 기술 질문
         }),
       });
       const data = await res.json();
@@ -1042,15 +1066,15 @@ function HomeScreen({
   return (
     <div className="min-h-screen flex flex-col screen-enter">
       {/* Navigation */}
-      <nav className="navy-gradient px-8 py-4 flex items-center justify-between shadow-lg">
-        <div className="flex items-center gap-2.5">
+      <nav className="navy-gradient px-4 sm:px-8 py-4 flex items-center justify-between gap-3 shadow-lg">
+        <div className="flex items-center gap-2.5 min-w-0">
           <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2">
               <path d="M12 2a5 5 0 1 0 5 5 5 5 0 0 0-5-5z"/>
               <path d="M20.84 14a8 8 0 0 1-15.68 0"/>
             </svg>
           </div>
-          <span className="text-white font-bold text-base tracking-tight">InterviewAI</span>
+          <span className="text-white font-bold text-base tracking-tight truncate">InterviewAI</span>
         </div>
 
         <div className="hidden md:flex items-center gap-6 text-sm text-white/70">
@@ -1065,7 +1089,7 @@ function HomeScreen({
           )}
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           {isLoggedIn ? (
             <>
               <div className="flex items-center gap-2 px-3 py-1.5 bg-white/10 rounded-lg">
@@ -1077,14 +1101,14 @@ function HomeScreen({
               <button
                 data-testid="button-logout"
                 onClick={onLogout}
-                className="px-4 py-2.5 text-white/70 text-base font-medium hover:text-white transition-colors"
+                className="px-2.5 sm:px-4 py-2.5 text-white/70 text-sm sm:text-base font-medium whitespace-nowrap hover:text-white transition-colors"
               >
                 로그아웃
               </button>
               <button
                 data-testid="button-delete-account"
                 onClick={onDeleteAccount}
-                className="px-4 py-2.5 text-white/50 text-base hover:text-red-300 transition-colors"
+                className="px-2.5 sm:px-4 py-2.5 text-white/50 text-sm sm:text-base whitespace-nowrap hover:text-red-300 transition-colors"
               >
                 회원 탈퇴
               </button>
@@ -1094,14 +1118,14 @@ function HomeScreen({
               <button
                 data-testid="button-login"
                 onClick={() => onAuth("login")}
-                className="px-6 py-3 text-white/90 text-base font-medium rounded-xl hover:bg-white/10 transition-colors"
+                className="px-3 sm:px-6 py-2.5 sm:py-3 text-white/90 text-sm sm:text-base font-medium rounded-xl whitespace-nowrap hover:bg-white/10 transition-colors"
               >
                 로그인
               </button>
               <button
                 data-testid="button-signup"
                 onClick={() => onAuth("signup")}
-                className="px-6 py-3 bg-white text-[hsl(var(--primary))] text-base font-bold rounded-xl hover:bg-white/90 transition-colors shadow-sm"
+                className="px-4 sm:px-6 py-2.5 sm:py-3 bg-white text-[hsl(var(--primary))] text-sm sm:text-base font-bold rounded-xl whitespace-nowrap hover:bg-white/90 transition-colors shadow-sm"
               >
                 시작하기
               </button>
@@ -1124,8 +1148,8 @@ function HomeScreen({
           </div>
 
           <h1 className="text-2xl sm:text-3xl md:text-5xl font-bold text-[hsl(var(--primary))] leading-[1.3] tracking-tight mb-5 break-keep">
-            <span className="block whitespace-nowrap">막연한 연습은 그만,</span>
-            <span className="block whitespace-nowrap">
+            <span className="block sm:whitespace-nowrap">막연한 연습은 그만,</span>
+            <span className="block sm:whitespace-nowrap">
               구체적인 피드백으로 <span className="text-[hsl(var(--accent))]">합격</span>에 가까워지세요
             </span>
           </h1>
