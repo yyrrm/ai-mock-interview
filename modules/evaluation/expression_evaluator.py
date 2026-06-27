@@ -24,18 +24,19 @@ def _score_smile(smile: float) -> float:
 def _score_tension(tension: float) -> float:
     # 찡그림(mouthFrown)·미간 내림(browDown)·눈썹 올림(browUp)·눈 찡그림(eyeSquint)
     # 을 합산한 긴장/부정 인상 점수.
-    # 무표정(tension≈0)이 만점이고, 살짝만 찌푸리거나 눈썹을 올려도 곧바로
-    # 감점되도록 임계값을 낮췄다. (이전엔 0.10 이하가 전부 100점이라 가벼운
-    # 찡그림이 무표정과 같은 점수를 받는 문제가 있었음)
-    if tension <= 0.02:
+    # 무표정(tension≈0)이 만점이고, 찌푸림이 강할수록 감점한다.
+    # 단, 최소값을 55로 둔다(이전 30). 이전엔 미소가 만점(100)이어도 약간의
+    # 긴장만 있으면 0.5*100 + 0.5*30 = 65 가 천장이 되어 '웃어도 65점에서
+    # 안 올라가는' 문제가 있었다. 최소값을 올려 천장을 풀었다.
+    if tension <= 0.04:
         return 100.0
-    if tension <= 0.08:
-        return 80.0
-    if tension <= 0.15:
+    if tension <= 0.10:
+        return 85.0
+    if tension <= 0.18:
+        return 70.0
+    if tension <= 0.28:
         return 60.0
-    if tension <= 0.25:
-        return 45.0
-    return 30.0
+    return 55.0
 
 
 class ExpressionEvaluator:
@@ -99,13 +100,17 @@ class ExpressionEvaluator:
         jaw_open = self._get(blend, "jawOpen")
 
         # 무표정에서 벗어나 부정/긴장 인상을 주는 눈썹·입·눈 움직임을 합산.
-        # browDown(미간 내림) 가중치를 높이고, browUp(눈썹 올림)·eyeSquint 도 반영해
-        # "눈썹을 찡그리거나 올려도 점수가 무표정과 같다" 는 문제를 없앤다.
-        tension = frown + brow_down + 0.6 * brow_up + 0.5 * eye_squint
+        # browDown(미간 내림) 가중치를 높이고, browUp(눈썹 올림)도 반영한다.
+        # 단, 진짜 미소(뒤셴 미소)는 눈가가 자연스럽게 좁아져 eyeSquint 가 올라가는데,
+        # 이를 '긴장'으로 오판하면 웃을수록 감점되는 모순이 생긴다. 그래서 미소가
+        # 충분할 때(smile≥0.15)는 eyeSquint 를 긴장 신호에서 제외한다.
+        squint_term = 0.0 if smile >= 0.15 else 0.5 * eye_squint
+        tension = frown + brow_down + 0.6 * brow_up + squint_term
 
         smile_score = _score_smile(smile)
         tension_score = _score_tension(tension)
-        total = 0.5 * smile_score + 0.5 * tension_score
+        # 미소 비중을 약간 높여(0.6) 자연스럽게 웃는 표정이 점수에 더 반영되게 한다.
+        total = 0.6 * smile_score + 0.4 * tension_score
         total = float(round(total, 1))
 
         self._smile_sum += smile
