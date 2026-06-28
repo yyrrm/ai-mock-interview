@@ -803,6 +803,7 @@ export default function App() {
           <ResultScreen
             abandoned={abandoned}
             result={result}
+            totalQuestions={targetQuestions}
             showResults={showResults}
             onShowResults={() => setShowResults(true)}
             onRestart={() => {
@@ -1808,10 +1809,10 @@ function PrepScreen({
               ].map((item, i) => (
                 <label
                   key={item}
+                  onClick={() => toggle(i)}
                   className="flex items-center gap-2.5 text-sm text-foreground mb-2.5 cursor-pointer group"
                 >
                   <div
-                    onClick={() => toggle(i)}
                     className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 transition-all ${
                       checked[i]
                         ? "bg-[hsl(var(--primary))] border-[hsl(var(--primary))]"
@@ -1929,6 +1930,10 @@ function InterviewScreen({
   // 1순위: OpenAI TTS(/api/tts, 자연스러운 한국어) → 실패 시 브라우저 기본 TTS 폴백.
   const [speaking, setSpeaking] = useState(false);
   const [muted, setMuted] = useState(false);
+  // 질문 '글자'를 화면에 띄울지. 음성(TTS)이 시작되는 순간에 맞춰 글자도 함께
+  // 보여주기 위한 게이트. 음성이 시작되거나(speaking), 음소거이거나, 안전장치
+  // 타임아웃이 지나면 true. 새 질문이 오면 false 로 되돌렸다가 다시 맞춘다.
+  const [showText, setShowText] = useState(false);
   // /interviewer.jpg(한국인 면접관 사진)가 있으면 사진을, 없으면 심볼 아바타로 폴백.
   const [imgOk, setImgOk] = useState(true);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -1968,8 +1973,10 @@ function InterviewScreen({
           audio.onerror = done;
 
           // 모바일에서 로드 완료 전에 play() 하면 앞부분이 잘려 '중간부터' 들린다.
-          // canplaythrough(전체 재생 가능) 를 기다린 뒤 재생한다. 이벤트가 안 오는
-          // 기기를 대비해 짧은 타임아웃 가드를 두고, 그래도 안 오면 그냥 재생한다.
+          // 재생 가능 시점까지 기다리되, 'canplaythrough'(전체 버퍼)는 늦게 오므로
+          // 더 빨리 발생하는 'canplay'(재생 시작 가능)도 함께 기다려 둘 중 먼저
+          // 오는 쪽에 재생한다. 이벤트가 안 오는 기기 대비 짧은 타임아웃 가드를
+          // 두되, 체감 지연을 줄이려 600ms 로 짧게 잡는다(그래도 안 오면 그냥 재생).
           await new Promise<void>((resolve) => {
             let settled = false;
             const go = () => {
@@ -1978,7 +1985,8 @@ function InterviewScreen({
               clearTimeout(timer);
               resolve();
             };
-            const timer = setTimeout(go, 1500);
+            const timer = setTimeout(go, 600);
+            audio.addEventListener("canplay", go, { once: true });
             audio.addEventListener("canplaythrough", go, { once: true });
             audio.load();
           });
@@ -1999,11 +2007,39 @@ function InterviewScreen({
     [stopSpeaking]
   );
 
+  // 질문 텍스트가 바뀌는 '즉시' 음성을 재생한다. busy(질문 생성 중)에 묶지 않는다.
+  // — 질문은 /api/question 이 끝나야 도착하고, 그때 busy 도 함께 false 가 된다.
+  //   예전엔 busy 를 의존성에 둬서 생성 중(busy=true)에 한 번 더 effect 가 돌며
+  //   불필요하게 멈췄다 켜졌다 했다. question 만 트리거로 삼아 도착 즉시 합성을 건다.
   useEffect(() => {
-    if (busy || muted || !question) return;
+    if (muted || !question) return;
     playQuestion(question);
     return () => stopSpeaking();
-  }, [question, busy, muted, playQuestion, stopSpeaking]);
+  }, [question, muted, playQuestion, stopSpeaking]);
+
+  // 질문 글자를 음성 시작에 맞춰 띄우는 게이트.
+  // 새 질문(또는 생성 중)이 오면 일단 글자를 숨기고(showText=false),
+  //   - 음소거면: 음성이 없으니 곧장 글자 표시
+  //   - 아니면: 음성이 시작되길 기다리되, TTS 가 끝내 시작 안 되는 기기(폴백 실패
+  //     등)에서 글자가 영영 안 뜨는 일이 없도록 3초 안전장치 타임아웃을 둔다.
+  useEffect(() => {
+    if (busy || !question) {
+      setShowText(false);
+      return;
+    }
+    if (muted) {
+      setShowText(true);
+      return;
+    }
+    setShowText(false);
+    const guard = setTimeout(() => setShowText(true), 3000);
+    return () => clearTimeout(guard);
+  }, [question, busy, muted]);
+
+  // 음성이 실제로 시작되면 그 순간 글자도 함께 띄운다(안전장치보다 먼저).
+  useEffect(() => {
+    if (speaking) setShowText(true);
+  }, [speaking]);
 
   // 질문 음성 재생 상태를 부모로 올려 음성 분석을 게이트한다.
   // (재생 중이면 분석 일시정지 → 질문 음성이 점수에 섞이지 않게.)
@@ -2195,9 +2231,24 @@ function InterviewScreen({
               </div>
               <span className="text-white/60 text-sm sm:text-base">질문 {questionIndex + 1}</span>
             </div>
-            <p key={questionIndex} className="text-white text-lg sm:text-xl lg:text-2xl leading-relaxed font-medium break-keep screen-enter">
-              {busy ? "다음 질문을 생성하는 중입니다..." : question}
-            </p>
+            {/* 질문 글자는 음성(TTS)이 '시작되는 순간'에 맞춰 띄운다(showText).
+                준비 전(질문 생성 중이거나 음성 시작 전)에는 면접관이 '생각 중'인
+                듯한 대기 연출을 보여줘, 같은 대기 시간도 덜 답답하게 만든다.
+                실제 면접도 면접관이 바로바로 질문하지 않으므로 이 텀은 자연스럽다. */}
+            {showText ? (
+              <p key={questionIndex} className="text-white text-lg sm:text-xl lg:text-2xl leading-relaxed font-medium break-keep screen-enter">
+                {question}
+              </p>
+            ) : (
+              <div className="flex items-center gap-3 text-white/60 text-base sm:text-lg font-medium screen-enter">
+                <span className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-[hsl(var(--accent))] recording-dot" style={{ animationDelay: "0s" }} />
+                  <span className="w-2 h-2 rounded-full bg-[hsl(var(--accent))] recording-dot" style={{ animationDelay: "0.2s" }} />
+                  <span className="w-2 h-2 rounded-full bg-[hsl(var(--accent))] recording-dot" style={{ animationDelay: "0.4s" }} />
+                </span>
+                <span>면접관이 다음 질문을 준비하고 있습니다…</span>
+              </div>
+            )}
 
             {/* 모바일 전용 컨트롤 — AI 면접관 패널을 숨겼으므로 질문 다시 듣기/음소거를
                 질문 카드 아래에 둔다(데스크톱에선 패널 안에 있으므로 lg:hidden). */}
@@ -2407,12 +2458,14 @@ function AnswerEvalCard({
 function ResultScreen({
   abandoned,
   result,
+  totalQuestions,
   showResults,
   onShowResults,
   onRestart,
 }: {
   abandoned: boolean;
   result: InterviewResult | null;
+  totalQuestions: number;
   showResults: boolean;
   onShowResults: () => void;
   onRestart: () => void;
@@ -2531,7 +2584,7 @@ function ResultScreen({
                   <span className="text-green-700 text-sm font-semibold">{grade}</span>
                 </div>
                 <p className="text-muted-foreground text-sm max-w-md mx-auto">
-                  5개 질문에 대한 면접이 완료되었습니다. 아래에서 상세 분석을 확인하세요.
+                  {totalQuestions}개 질문에 대한 면접이 완료되었습니다. 아래에서 상세 분석을 확인하세요.
                 </p>
                 {!showResults && (
                   <button
