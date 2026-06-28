@@ -2055,7 +2055,7 @@ function PrepScreen({
             <span className="text-xs text-[hsl(var(--accent))] font-semibold">필수</span>
           </div>
           <p className="text-muted-foreground text-sm mb-4">
-            각 항목을 1,000~2,000자 이내로 작성하세요. (맞춤 질문의 근거가 되므로 최소 한 문항 이상 작성해야 시작할 수 있습니다 · 성장과정은 질문 비중이 낮습니다)
+            각 항목을 1,000~2,000자 이내로 작성하세요. (맞춤 질문의 근거가 되므로 최소 한 문항 이상 작성해야 시작할 수 있습니다)
           </p>
           <div className="grid md:grid-cols-2 gap-4">
             {COVER_SECTIONS.map((sec) => {
