@@ -249,11 +249,11 @@ class VoiceEvaluator:
         # ---- feedback ----
         feedback_parts = []
         if wpm > 220:
-            feedback_parts.append("말 속도가 너무 빠릅니다(220WPM 초과). 조금 천천히 말해보세요.")
+            feedback_parts.append("말 속도가 너무 빠릅니다. 조금 더 천천히 말해보세요.")
         elif wpm < 100:
-            feedback_parts.append("말 속도가 느린 편입니다(100WPM 미만). 핵심을 또렷하게 이어 말해보세요.")
+            feedback_parts.append("말 속도가 느린 편입니다. 핵심을 또렷하게 이어 말해보세요.")
         elif not (130 <= wpm <= 180):
-            feedback_parts.append("말 속도가 약간 치우쳐 있습니다. 130~180WPM 범위를 목표로 해보세요.")
+            feedback_parts.append("말 속도가 약간 치우쳐 있습니다. 조금 더 천천히 또박또박 말해보세요.")
 
         if silence_per_min >= 6:
             feedback_parts.append("답변 중 2초 이상 침묵이 잦습니다. 연결어(예: '우선…')로 흐름을 이어보세요.")
@@ -268,7 +268,7 @@ class VoiceEvaluator:
         if clarity_method == "confidence" and stt_confidence is not None:
             # confidence 는 발음 외 소음·마이크 영향도 받으므로 문구도 그에 맞춘다.
             if stt_confidence < 0.75:
-                feedback_parts.append("음성 인식 신뢰도가 낮습니다. 더 또렷하게 말하거나 주변 소음·마이크 상태를 확인해보세요.")
+                feedback_parts.append("목소리가 또렷하게 들리지 않습니다. 더 또렷하게 말하거나 주변 소음·마이크 상태를 확인해보세요.")
             elif stt_confidence < 0.90:
                 feedback_parts.append("대체로 또렷하지만 발음이 약간 뭉개지거나 주변 잡음이 섞일 수 있습니다.")
 
