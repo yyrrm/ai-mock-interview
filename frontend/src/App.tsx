@@ -27,53 +27,6 @@ const QUESTIONS = [
 const QUESTION_COUNT_OPTIONS = [7, 10] as const;
 const DEFAULT_QUESTION_COUNT = 7;
 
-// ── AI 면접관 음성(TTS) 설정 ──────────────────────────────────────────
-// 음성 종류·속도를 사용자가 고를 수 있게 한다. 백엔드(/api/tts)는 voice 만 받고,
-// 속도는 OpenAI tts-1 이 파라미터를 받지 않으므로 클라이언트에서 오디오
-// 재생 배속(playbackRate)으로 조절한다. 선택값은 localStorage 에 저장해
-// 면접 준비 화면 → 면접 화면, 그리고 다음 세션까지 유지된다.
-const VOICE_OPTIONS = [
-  { id: "nova", label: "따뜻한 여성" },    // 기본값(따뜻한 음색)
-  { id: "shimmer", label: "밝은 여성" },
-  { id: "alloy", label: "중립적인 음색" },
-  { id: "echo", label: "차분한 남성" },
-  { id: "onyx", label: "묵직한 남성" },
-  { id: "fable", label: "부드러운 남성" },
-] as const;
-type VoiceId = (typeof VOICE_OPTIONS)[number]["id"];
-const DEFAULT_VOICE: VoiceId = "nova";
-
-// 속도 3단계: 느림 / 보통 / 빠름. value 는 오디오 재생 배속(playbackRate)이며
-// 브라우저 폴백 TTS 의 발화 속도(rate)에도 그대로 쓴다.
-const SPEED_OPTIONS = [
-  { id: "slow", label: "느림", value: 0.85 },
-  { id: "normal", label: "보통", value: 1.0 },
-  { id: "fast", label: "빠름", value: 1.15 },
-] as const;
-type SpeedId = (typeof SPEED_OPTIONS)[number]["id"];
-const DEFAULT_SPEED: SpeedId = "normal";
-const speedValue = (id: SpeedId) =>
-  SPEED_OPTIONS.find((s) => s.id === id)?.value ?? 1.0;
-
-const VOICE_PREF_KEY = "interview.ttsVoice";
-const SPEED_PREF_KEY = "interview.ttsSpeed";
-
-// localStorage 에서 저장된 음성/속도 선택을 읽어온다(없거나 손상 시 기본값).
-function loadVoicePref(): VoiceId {
-  try {
-    const v = localStorage.getItem(VOICE_PREF_KEY);
-    if (v && VOICE_OPTIONS.some((o) => o.id === v)) return v as VoiceId;
-  } catch { /* localStorage 접근 불가(시크릿 모드 등) → 기본값 */ }
-  return DEFAULT_VOICE;
-}
-function loadSpeedPref(): SpeedId {
-  try {
-    const v = localStorage.getItem(SPEED_PREF_KEY);
-    if (v && SPEED_OPTIONS.some((o) => o.id === v)) return v as SpeedId;
-  } catch { /* 동상 */ }
-  return DEFAULT_SPEED;
-}
-
 // 자기소개서 문항 (백엔드 COVER_LETTER_SECTIONS 와 key 일치)
 const COVER_SECTIONS = [
   { key: "growth", label: "성장과정", placeholder: "자라온 환경, 가치관 형성에 영향을 준 경험 등" },
@@ -383,18 +336,6 @@ export default function App() {
   const [guidance, setGuidance] = useState("");              // 질문 비중 지침
   const [topic, setTopic] = useState("면접");                // 면접 주제(직무·경력 조립값) — 첫 질문·꼬리 질문 생성에 사용
   const [targetQuestions, setTargetQuestions] = useState(DEFAULT_QUESTION_COUNT); // 이번 면접 질문 개수(사용자 선택)
-  // AI 면접관 음성 설정 — 준비 화면에서 고른 기본값으로 시작하고, 면접 중에도
-  // 바꿀 수 있다. 변경 시 localStorage 에 저장해 다음 세션까지 유지한다.
-  const [ttsVoice, setTtsVoice] = useState<VoiceId>(loadVoicePref);
-  const [ttsSpeed, setTtsSpeed] = useState<SpeedId>(loadSpeedPref);
-  const updateVoice = useCallback((v: VoiceId) => {
-    setTtsVoice(v);
-    try { localStorage.setItem(VOICE_PREF_KEY, v); } catch { /* 저장 실패 무시 */ }
-  }, []);
-  const updateSpeed = useCallback((s: SpeedId) => {
-    setTtsSpeed(s);
-    try { localStorage.setItem(SPEED_PREF_KEY, s); } catch { /* 저장 실패 무시 */ }
-  }, []);
   const [busy, setBusy] = useState(false);                   // API 호출 중
   const [poseScore, setPoseScore] = useState<number | null>(null); // 실시간 자세 점수
   const [exprScore, setExprScore] = useState<number | null>(null); // 실시간 표정 점수
@@ -908,10 +849,6 @@ export default function App() {
             videoRef={prepVideoRef}
             onBack={() => navigate("home")}
             onStart={goToInterview}
-            voice={ttsVoice}
-            speed={ttsSpeed}
-            onVoiceChange={updateVoice}
-            onSpeedChange={updateSpeed}
           />
         )}
         {screen === "interview" && (
@@ -930,10 +867,6 @@ export default function App() {
             onNext={nextQuestion}
             onEnd={() => endInterview(true)}
             onSpeakingChange={handleSpeakingChange}
-            voice={ttsVoice}
-            speed={ttsSpeed}
-            onVoiceChange={updateVoice}
-            onSpeedChange={updateSpeed}
           />
         )}
         {screen === "result" && (
@@ -1748,19 +1681,10 @@ function PrepScreen({
   videoRef,
   onBack,
   onStart,
-  voice,
-  speed,
-  onVoiceChange,
-  onSpeedChange,
 }: {
   videoRef: React.RefObject<HTMLVideoElement | null>;
   onBack: () => void;
   onStart: (sections: CoverSections, topic: string, count: number) => void | Promise<void>;
-  /** AI 면접관 음성 종류 / 발화 속도 기본값(면접 중에도 바꿀 수 있다). */
-  voice: VoiceId;
-  speed: SpeedId;
-  onVoiceChange: (v: VoiceId) => void;
-  onSpeedChange: (s: SpeedId) => void;
 }) {
   const [camReady, setCamReady] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
@@ -1794,48 +1718,6 @@ function PrepScreen({
   const coverLetterFilled = coverLetterChars >= MIN_COVER_LETTER_CHARS;
 
   const canStart = allChecked && coverLetterFilled && jobRoleFilled;
-
-  // 음성 미리듣기 — 고른 음성/속도로 짧은 문장을 들려준다(면접 화면과 동일한 경로).
-  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
-  const [previewing, setPreviewing] = useState(false);
-  const previewVoice = async () => {
-    // 이미 재생 중이면 멈춘다(토글).
-    if (previewAudioRef.current) {
-      previewAudioRef.current.pause();
-      previewAudioRef.current = null;
-    }
-    window.speechSynthesis?.cancel();
-    const sample = "안녕하세요. 지금부터 면접을 시작하겠습니다. 편하게 답변해 주세요.";
-    setPreviewing(true);
-    const done = () => setPreviewing(false);
-    try {
-      const res = await fetch("/api/tts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: sample, voice }),
-      });
-      if (res.ok) {
-        const url = URL.createObjectURL(await res.blob());
-        const audio = new Audio(url);
-        audio.playbackRate = speedValue(speed);
-        previewAudioRef.current = audio;
-        audio.onended = () => { URL.revokeObjectURL(url); done(); };
-        audio.onerror = () => { URL.revokeObjectURL(url); done(); };
-        await audio.play();
-        return;
-      }
-    } catch {
-      /* 서버 오류 → 브라우저 TTS 폴백 */
-    }
-    speakKoBrowser(sample, () => {}, done, speedValue(speed));
-  };
-  // 화면을 떠날 때 미리듣기 음성을 정리한다.
-  useEffect(() => {
-    return () => {
-      previewAudioRef.current?.pause();
-      window.speechSynthesis?.cancel();
-    };
-  }, []);
 
   const handleStart = async () => {
     if (!canStart) return;
@@ -1993,58 +1875,6 @@ function PrepScreen({
                 질문이 많을수록 면접이 길어집니다.
               </span>
             </div>
-          </div>
-
-          {/* AI 면접관 음성 — 질문을 읽어줄 목소리와 속도. 면접 중에도 바꿀 수 있다. */}
-          <div className="mt-5 pt-5 border-t border-[hsl(var(--border))]">
-            <label className="font-semibold text-sm text-foreground block mb-2">AI 면접관 음성</label>
-            <div className="grid md:grid-cols-2 gap-4">
-              {/* 음성 종류 */}
-              <div>
-                <span className="text-xs text-muted-foreground block mb-1.5">목소리</span>
-                <select
-                  data-testid="select-prep-voice"
-                  value={voice}
-                  onChange={(e) => onVoiceChange(e.target.value as VoiceId)}
-                  className="w-full rounded-xl border border-[hsl(var(--border))] bg-background p-3 text-sm focus:outline-none focus:border-[hsl(var(--primary))]"
-                >
-                  {VOICE_OPTIONS.map((o) => (
-                    <option key={o.id} value={o.id}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              {/* 발화 속도 */}
-              <div>
-                <span className="text-xs text-muted-foreground block mb-1.5">속도</span>
-                <div className="flex items-center gap-2">
-                  {SPEED_OPTIONS.map((s) => (
-                    <button
-                      key={s.id}
-                      type="button"
-                      data-testid={`button-prep-speed-${s.id}`}
-                      onClick={() => onSpeedChange(s.id)}
-                      className={`flex-1 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${
-                        speed === s.id
-                          ? "navy-gradient text-white shadow"
-                          : "bg-background border border-[hsl(var(--border))] text-foreground hover:border-[hsl(var(--primary))]"
-                      }`}
-                    >
-                      {s.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-            <button
-              type="button"
-              data-testid="button-prep-voice-preview"
-              onClick={previewVoice}
-              className="mt-3 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[hsl(var(--primary))]/10 text-[hsl(var(--primary))] text-sm font-medium hover:bg-[hsl(var(--primary))]/15 transition-colors"
-            >
-              {previewing ? "🔊 재생 중…" : "🔊 음성 미리듣기"}
-            </button>
           </div>
         </div>
 
@@ -2263,8 +2093,7 @@ function PrepScreen({
 /* ─────────────────────────── INTERVIEW ─────────────────────────── */
 
 // 브라우저 기본 TTS (폴백). OpenAI TTS 실패 시에만 사용.
-// rate: 발화 속도(1.0=보통). OpenAI TTS 와 동일한 속도 설정을 폴백에도 반영한다.
-function speakKoBrowser(text: string, onStart: () => void, onEnd: () => void, rate = 1.0) {
+function speakKoBrowser(text: string, onStart: () => void, onEnd: () => void) {
   const synth = window.speechSynthesis;
   if (!synth || !text) {
     onEnd();
@@ -2276,7 +2105,7 @@ function speakKoBrowser(text: string, onStart: () => void, onEnd: () => void, ra
     u.lang = "ko-KR";
     const ko = synth.getVoices().find((v) => (v.lang || "").toLowerCase().startsWith("ko"));
     if (ko) u.voice = ko;
-    u.rate = rate;
+    u.rate = 1.0;
     u.onstart = onStart;
     u.onend = onEnd;
     u.onerror = onEnd;
@@ -2301,10 +2130,6 @@ function InterviewScreen({
   onNext,
   onEnd,
   onSpeakingChange,
-  voice,
-  speed,
-  onVoiceChange,
-  onSpeedChange,
 }: {
   videoRef: React.RefObject<HTMLVideoElement | null>;
   question: string;
@@ -2321,11 +2146,6 @@ function InterviewScreen({
   onEnd: () => void;
   /** AI 면접관 질문 음성(TTS) 재생 여부 변화 → 부모가 음성 분석을 일시 정지/재개한다. */
   onSpeakingChange: (speaking: boolean) => void;
-  /** AI 면접관 음성 종류 / 발화 속도(부모 보관 → 다음 세션까지 유지). */
-  voice: VoiceId;
-  speed: SpeedId;
-  onVoiceChange: (v: VoiceId) => void;
-  onSpeedChange: (s: SpeedId) => void;
 }) {
   const isLast = questionIndex === totalQuestions - 1;
 
@@ -2340,20 +2160,6 @@ function InterviewScreen({
   // /interviewer.jpg(한국인 면접관 사진)가 있으면 사진을, 없으면 심볼 아바타로 폴백.
   const [imgOk, setImgOk] = useState(true);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-
-  // 음성/속도를 ref 로도 들고 있어, playQuestion(useCallback)이 매 속도 변경마다
-  // 새로 만들어져 재생 effect 를 재실행(=질문 음성 재합성)하는 일을 막는다.
-  // 음성 종류 변경은 다음 질문/다시 듣기부터 적용된다(재생 중인 음성을 갑자기
-  // 바꾸지 않는 게 자연스럽다). 속도는 재생 중에도 즉시 반영한다(아래 effect).
-  const voiceRefVal = useRef(voice);
-  voiceRefVal.current = voice;
-  const speedRefVal = useRef(speed);
-  speedRefVal.current = speed;
-
-  // 속도가 바뀌면 지금 재생 중인 음성의 배속을 즉시 반영한다.
-  useEffect(() => {
-    if (audioRef.current) audioRef.current.playbackRate = speedValue(speed);
-  }, [speed]);
 
   const stopSpeaking = useCallback(() => {
     if (audioRef.current) {
@@ -2371,7 +2177,7 @@ function InterviewScreen({
         const res = await fetch("/api/tts", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text, voice: voiceRefVal.current }),
+          body: JSON.stringify({ text }),
         });
         if (res.ok) {
           const url = URL.createObjectURL(await res.blob());
@@ -2379,8 +2185,6 @@ function InterviewScreen({
           // 전체 mp3 를 디코드할 준비가 될 때까지 기다리도록 preload 강제.
           audio.preload = "auto";
           audio.src = url;
-          // 선택한 속도(배속)를 적용. play() 후에도 위 effect 가 재반영한다.
-          audio.playbackRate = speedValue(speedRefVal.current);
           audioRef.current = audio;
           audio.onplay = () => setSpeaking(true);
           const done = () => {
@@ -2421,12 +2225,7 @@ function InterviewScreen({
       } catch {
         /* 서버/네트워크 오류·재생 거부 → 아래 브라우저 TTS 폴백 */
       }
-      speakKoBrowser(
-        text,
-        () => setSpeaking(true),
-        () => setSpeaking(false),
-        speedValue(speedRefVal.current),
-      );
+      speakKoBrowser(text, () => setSpeaking(true), () => setSpeaking(false));
     },
     [stopSpeaking]
   );
@@ -2620,42 +2419,6 @@ function InterviewScreen({
                     {muted ? "음소거 해제" : "음소거"}
                   </button>
                 </div>
-                {/* 음성 종류 / 속도 — 면접 중에도 바꿀 수 있다(다음 질문·다시 듣기부터
-                    음성 종류 적용, 속도는 즉시 반영). 음소거 시엔 의미가 없어 흐리게. */}
-                <div className={`flex items-center justify-center gap-2 mt-3 ${muted ? "opacity-40 pointer-events-none" : ""}`}>
-                  <label className="text-white/50 text-xs">음성</label>
-                  <select
-                    data-testid="select-tts-voice"
-                    value={voice}
-                    onChange={(e) => onVoiceChange(e.target.value as VoiceId)}
-                    className="rounded-lg bg-white/10 text-white/80 text-xs px-2 py-1.5 border border-white/10 focus:outline-none focus:border-[hsl(var(--accent))] cursor-pointer"
-                  >
-                    {VOICE_OPTIONS.map((o) => (
-                      <option key={o.id} value={o.id} className="bg-[hsl(222,47%,15%)]">
-                        {o.label}
-                      </option>
-                    ))}
-                  </select>
-                  <span className="text-white/30 mx-0.5">·</span>
-                  <label className="text-white/50 text-xs">속도</label>
-                  <div className="flex rounded-lg overflow-hidden border border-white/10">
-                    {SPEED_OPTIONS.map((s) => (
-                      <button
-                        key={s.id}
-                        type="button"
-                        data-testid={`button-tts-speed-${s.id}`}
-                        onClick={() => onSpeedChange(s.id)}
-                        className={`px-2.5 py-1.5 text-xs font-medium transition-colors ${
-                          speed === s.id
-                            ? "bg-[hsl(var(--accent))] text-white"
-                            : "bg-white/10 text-white/60 hover:bg-white/15"
-                        }`}
-                      >
-                        {s.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
                 {speaking && (
                   <p className="text-[hsl(var(--accent))] text-xs mt-2 flex items-center justify-center gap-1.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-[hsl(var(--accent))] recording-dot" />
@@ -2712,62 +2475,28 @@ function InterviewScreen({
 
             {/* 모바일 전용 컨트롤 — AI 면접관 패널을 숨겼으므로 질문 다시 듣기/음소거를
                 질문 카드 아래에 둔다(데스크톱에선 패널 안에 있으므로 lg:hidden). */}
-            <div className="lg:hidden mt-4 flex flex-col gap-2">
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={replayQuestion}
-                  disabled={muted}
-                  className="px-3 py-1.5 rounded-lg bg-white/10 text-white/80 text-xs font-medium whitespace-nowrap hover:bg-white/15 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  🔊 질문 다시 듣기
-                </button>
-                <button
-                  onClick={() => setMuted((m) => !m)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${
-                    muted ? "bg-red-500/20 text-red-300" : "bg-white/10 text-white/60 hover:bg-white/15"
-                  }`}
-                >
-                  {muted ? "음소거 해제" : "음소거"}
-                </button>
-                {speaking && (
-                  <span className="text-[hsl(var(--accent))] text-xs flex items-center gap-1.5 ml-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-[hsl(var(--accent))] recording-dot" />
-                    질문하는 중…
-                  </span>
-                )}
-              </div>
-              {/* 음성 종류 / 속도 선택(모바일) */}
-              <div className={`flex flex-wrap items-center gap-2 ${muted ? "opacity-40 pointer-events-none" : ""}`}>
-                <select
-                  data-testid="select-tts-voice-mobile"
-                  value={voice}
-                  onChange={(e) => onVoiceChange(e.target.value as VoiceId)}
-                  className="rounded-lg bg-white/10 text-white/80 text-xs px-2 py-1.5 border border-white/10 focus:outline-none focus:border-[hsl(var(--accent))]"
-                >
-                  {VOICE_OPTIONS.map((o) => (
-                    <option key={o.id} value={o.id} className="bg-[hsl(222,47%,15%)]">
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-                <div className="flex rounded-lg overflow-hidden border border-white/10">
-                  {SPEED_OPTIONS.map((s) => (
-                    <button
-                      key={s.id}
-                      type="button"
-                      data-testid={`button-tts-speed-mobile-${s.id}`}
-                      onClick={() => onSpeedChange(s.id)}
-                      className={`px-2.5 py-1.5 text-xs font-medium transition-colors ${
-                        speed === s.id
-                          ? "bg-[hsl(var(--accent))] text-white"
-                          : "bg-white/10 text-white/60 hover:bg-white/15"
-                      }`}
-                    >
-                      {s.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
+            <div className="lg:hidden mt-4 flex items-center gap-2">
+              <button
+                onClick={replayQuestion}
+                disabled={muted}
+                className="px-3 py-1.5 rounded-lg bg-white/10 text-white/80 text-xs font-medium whitespace-nowrap hover:bg-white/15 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                🔊 질문 다시 듣기
+              </button>
+              <button
+                onClick={() => setMuted((m) => !m)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${
+                  muted ? "bg-red-500/20 text-red-300" : "bg-white/10 text-white/60 hover:bg-white/15"
+                }`}
+              >
+                {muted ? "음소거 해제" : "음소거"}
+              </button>
+              {speaking && (
+                <span className="text-[hsl(var(--accent))] text-xs flex items-center gap-1.5 ml-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[hsl(var(--accent))] recording-dot" />
+                  질문하는 중…
+                </span>
+              )}
             </div>
           </div>
         </div>
