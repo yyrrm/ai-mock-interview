@@ -301,6 +301,21 @@ export default function App() {
   const [timer, setTimer] = useState(0);
   const [showResults, setShowResults] = useState(false);
   const [abandoned, setAbandoned] = useState(false);
+  // 면접 기록(계정 DB) 저장 상태 — 면접 종료 시 자동 저장되며, 결과 화면의
+  // '기록 저장' 버튼이 이 상태를 보여주고 실패 시 다시 저장할 수 있게 한다.
+  const [recordSaveStatus, setRecordSaveStatus] = useState<
+    "idle" | "saving" | "saved" | "error"
+  >("idle");
+  // 다시 저장(재시도) 시 같은 데이터를 쓰기 위해 마지막 저장 페이로드를 보관한다.
+  const lastRecordPayloadRef = useRef<{
+    overall: number;
+    scores: { name: string; score: number }[];
+    qa: { question: string; answer: string }[];
+    client_id: string; // 면접 세션 ID(멱등성 키)
+  } | null>(null);
+  // '기록 저장' 버튼 연타 시 동시 요청을 막는 락 — React 상태(setRecordSaveStatus)는
+  // 비동기라 연타 사이에 아직 갱신 전이라 가드를 통과할 수 있어, ref 로 즉시 잠근다.
+  const savingLockRef = useRef(false);
 
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [userName, setUserName] = useState("");
@@ -683,26 +698,39 @@ export default function App() {
     // 생성된 record id 를 받아두면, 비동기 채점이 도착했을 때 그 기록에 붙일 수 있다.
     let recordId: number | null = null;
     if (!isAbandoned && built.scores.length > 0) {
+      // 결과 화면의 '기록 저장' 버튼이 재시도할 수 있도록 페이로드를 보관한다.
+      // client_id(면접 세션 ID)를 함께 보내, 같은 면접을 여러 번 저장해도 서버가
+      // 한 건만 남기도록(멱등성) 한다.
+      const payload = {
+        overall: built.overall,
+        scores: built.scores.map((s) => ({ name: s.name, score: s.score })),
+        // 질문-답변 전문도 함께 저장해, 기록에서 실제 대화를 다시 볼 수 있게 한다.
+        qa: answeredQa,
+        client_id: sessionIdRef.current,
+      };
+      lastRecordPayloadRef.current = payload;
+      setRecordSaveStatus("saving");
       try {
         const res = await fetch("/api/records", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            overall: built.overall,
-            scores: built.scores.map((s) => ({ name: s.name, score: s.score })),
-            // 질문-답변 전문도 함께 저장해, 기록에서 실제 대화를 다시 볼 수 있게 한다.
-            qa: answeredQa,
-          }),
+          body: JSON.stringify(payload),
         });
         if (res.ok) {
           const data = await res.json();
           recordId = data?.record?.id ?? null;
+          setRecordSaveStatus("saved");
         } else {
           console.warn("면접 기록 저장 실패:", res.status);
+          setRecordSaveStatus("error");
         }
       } catch {
         console.warn("면접 기록 저장 중 네트워크 오류");
+        setRecordSaveStatus("error");
       }
+    } else {
+      lastRecordPayloadRef.current = null;
+      setRecordSaveStatus("idle");
     }
 
     setAbandoned(isAbandoned);
@@ -759,6 +787,31 @@ export default function App() {
     }
   };
 
+  // 결과 화면 '기록 저장' 버튼이 호출 — 자동 저장이 실패했을 때 같은 데이터로 다시 시도한다.
+  // 이미 저장됐거나 저장 중이면 아무 것도 하지 않는다(중복 기록 방지).
+  // savingLockRef: 연타 시 두 번째 클릭이 첫 fetch 완료 전에 들어와도 즉시 차단한다.
+  // (같은 client_id 라 서버도 막지만, 불필요한 동시 요청 자체를 줄인다.)
+  const saveRecord = useCallback(async () => {
+    if (savingLockRef.current) return;
+    if (recordSaveStatus === "saved" || recordSaveStatus === "saving") return;
+    const payload = lastRecordPayloadRef.current;
+    if (!payload) return;
+    savingLockRef.current = true;
+    setRecordSaveStatus("saving");
+    try {
+      const res = await fetch("/api/records", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      setRecordSaveStatus(res.ok ? "saved" : "error");
+    } catch {
+      setRecordSaveStatus("error");
+    } finally {
+      savingLockRef.current = false;
+    }
+  }, [recordSaveStatus]);
+
   return (
     <div className="min-h-screen bg-background font-sans overflow-hidden">
       <div
@@ -810,6 +863,8 @@ export default function App() {
             result={result}
             totalQuestions={targetQuestions}
             showResults={showResults}
+            recordSaveStatus={recordSaveStatus}
+            onSaveRecord={saveRecord}
             onShowResults={() => setShowResults(true)}
             onRestart={() => {
               setShowResults(false);
@@ -1093,10 +1148,10 @@ function ResultShowcase() {
             <h3 className="font-bold text-[hsl(var(--primary))] mb-4">AI 피드백 요약</h3>
             <div className="flex flex-col gap-3">
               {[
-                { type: "good", text: "카메라를 안정적으로 응시했습니다. 좋은 아이컨택입니다." },
+                { type: "good", text: "카메라를 안정적으로 응시했습니다. 시선 처리가 좋습니다." },
                 { type: "good", text: "자연스럽고 안정적인 표정을 잘 유지했습니다." },
                 { type: "improve", text: "상체 흔들림이 조금 있습니다. 자세를 안정적으로 유지해보세요." },
-                { type: "improve", text: "말 속도가 약간 빠릅니다. 130~180 WPM을 목표로 해보세요." },
+                { type: "improve", text: "말 속도가 약간 빠릅니다. 조금 더 천천히 또박또박 말해보세요." },
               ].map((fb, i) => (
                 <div
                   key={i}
@@ -1215,7 +1270,7 @@ function HomeScreen({
           <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-[hsl(var(--accent))/0.1] border border-[hsl(var(--accent))/0.2] rounded-full mb-6">
             <span className="w-1.5 h-1.5 rounded-full bg-[hsl(var(--accent))] recording-dot" />
             <span className="text-xs font-semibold text-[hsl(var(--accent))]">
-              AI 멀티모달 면접 분석 플랫폼
+              AI 종합 면접 분석 플랫폼
             </span>
           </div>
 
@@ -1307,7 +1362,7 @@ function HomeScreen({
                   </svg>
                 ),
                 title: "시선 분석",
-                desc: "시선이 카메라를 안정적으로 향하는지, 한쪽으로 쏠리거나 흔들리지는 않는지 실시간으로 분석해 아이컨택을 평가합니다.",
+                desc: "시선이 카메라를 안정적으로 향하는지, 한쪽으로 쏠리거나 흔들리지는 않는지 실시간으로 분석해 시선 처리를 평가합니다.",
               },
               {
                 // 표정 — 미소 짓는 얼굴 + 표정 포인트 일러스트
@@ -1449,7 +1504,7 @@ function HomeScreen({
             {[
               { step: "01", title: "자기소개서 작성", desc: "성장과정·지원동기·장단점·입사 후 포부를 작성하면 AI가 내용을 분석해 맞춤 질문을 준비합니다." },
               { step: "02", title: "AI 모의면접 진행", desc: "실전과 동일한 환경에서 면접을 진행합니다. AI가 답변을 바탕으로 꼬리 질문을 생성합니다." },
-              { step: "03", title: "멀티모달 성과 리포트", desc: "시선·표정·음성·자세를 종합한 리포트와 개선 가이드를 즉시 제공합니다." },
+              { step: "03", title: "종합 성과 리포트", desc: "시선·표정·음성·자세를 종합한 리포트와 개선 가이드를 즉시 제공합니다." },
             ].map((s) => (
               <div key={s.step} className="text-center">
                 <div className="w-16 h-16 rounded-full bg-white/10 border border-white/20 flex items-center justify-center mx-auto mb-4">
@@ -2532,6 +2587,8 @@ function ResultScreen({
   result,
   totalQuestions,
   showResults,
+  recordSaveStatus,
+  onSaveRecord,
   onShowResults,
   onRestart,
 }: {
@@ -2539,6 +2596,8 @@ function ResultScreen({
   result: InterviewResult | null;
   totalQuestions: number;
   showResults: boolean;
+  recordSaveStatus: "idle" | "saving" | "saved" | "error";
+  onSaveRecord: () => void;
   onShowResults: () => void;
   onRestart: () => void;
 }) {
@@ -2554,7 +2613,7 @@ function ResultScreen({
 
   return (
     <div className="min-h-screen flex flex-col screen-enter">
-      <nav className="navy-gradient px-3 sm:px-6 py-4 flex items-center justify-between gap-2 shadow-lg">
+      <nav className="print-hide navy-gradient px-3 sm:px-6 py-4 flex items-center justify-between gap-2 shadow-lg">
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center shrink-0">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2">
@@ -2577,7 +2636,7 @@ function ResultScreen({
         </button>
       </nav>
 
-      <div className="flex-1 max-w-5xl mx-auto w-full px-6 py-10">
+      <div id="report-print-area" className="flex-1 max-w-5xl mx-auto w-full px-6 py-10">
         {invalidReason ? (
           <div className="flex flex-col items-center justify-center min-h-[60vh] text-center screen-enter">
             <div className="w-20 h-20 rounded-full bg-orange-100 flex items-center justify-center mb-6 shadow-md">
@@ -2759,12 +2818,36 @@ function ResultScreen({
                     ))}
                   </div>
 
-                  <div className="mt-6 flex gap-3 justify-end">
+                  <div className="print-hide mt-6 flex flex-col sm:flex-row gap-3 sm:justify-end">
+                    {/* 기록 저장 — 면접 종료 시 계정에 자동 저장되며, 이 버튼이 상태를
+                        보여준다. 실패했을 때만 다시 누르면 재시도한다(중복 기록 방지). */}
+                    <button
+                      data-testid="button-save-record"
+                      onClick={onSaveRecord}
+                      disabled={recordSaveStatus === "saving" || recordSaveStatus === "saved"}
+                      className={`px-5 py-2.5 text-sm font-semibold rounded-xl border transition-colors ${
+                        recordSaveStatus === "saved"
+                          ? "border-green-300 bg-green-50 text-green-700 cursor-default"
+                          : recordSaveStatus === "error"
+                          ? "border-red-300 bg-red-50 text-red-700 hover:bg-red-100"
+                          : "border-[hsl(var(--border))] text-[hsl(var(--primary))] hover:bg-[hsl(var(--secondary))]"
+                      }`}
+                    >
+                      {recordSaveStatus === "saving"
+                        ? "저장 중…"
+                        : recordSaveStatus === "saved"
+                        ? "✓ 기록 저장됨"
+                        : recordSaveStatus === "error"
+                        ? "기록 저장 다시 시도"
+                        : "기록 저장"}
+                    </button>
+                    {/* PDF 저장 — 브라우저 인쇄 대화상자에서 '대상: PDF로 저장' 선택. */}
                     <button
                       data-testid="button-download-report"
+                      onClick={() => window.print()}
                       className="px-5 py-2.5 border border-[hsl(var(--border))] text-[hsl(var(--primary))] text-sm font-semibold rounded-xl hover:bg-[hsl(var(--secondary))] transition-colors"
                     >
-                      리포트 저장
+                      PDF 저장
                     </button>
                     <button
                       data-testid="button-retry"
