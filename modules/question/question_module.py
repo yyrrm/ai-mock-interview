@@ -2,7 +2,6 @@ from dotenv import load_dotenv
 import os
 import json
 import logging
-import random
 import shutil
 import subprocess
 from openai import OpenAI
@@ -183,6 +182,9 @@ COVER_LETTER_GUIDANCE = (
 # 질문이 비슷하게 수렴하지 않도록, 특히 경험형(태도·극복)과 프로젝트(기술 판단·
 # 역할)처럼 겹치기 쉬운 유형의 초점을 서로 다르게 분리한다.
 CATEGORY_POOL = {
+    # intro(자기소개형)·motivation(지원동기형)은 현재 본문 질문에서 쓰지 않는다.
+    # 첫 질문이 지원동기로 고정되고, 자기소개형 질문은 면접 전체에서 내지 않기로 해
+    # 프론트 CATEGORY_POOL_KEYS 에서 둘 다 제외했다. 정의는 향후 변경 대비로 남겨 둔다.
     "intro": {
         "label": "자기소개형",
         "focus": "지원자 개인의 정체성·강약점·자기인식에 초점. 특정 프로젝트나 경험 사례로 빠지지 말 것",
@@ -306,28 +308,23 @@ _FALLBACK_QUESTIONS = [
 
 
 def fixed_first_question(topic="면접"):
-    """모든 면접의 첫 질문은 고정 문장으로 박제하되, '지원동기' 또는 '자기소개'
-    중 하나를 무작위로 고른다.
+    """모든 면접의 첫 질문은 '지원동기' 고정 문장으로 박제한다.
 
     예전에는 Claude 가 첫 질문을 생성했으나, 자소서의 기술 경험을 끌어와
     '지원동기'가 아닌 경험 심화 질문으로 변질되는 문제가 있었다. 그래서 첫 질문은
-    고정 문장으로 박제한다. 단, 첫 질문이 항상 지원동기면 단조로워, 면접 도입부에
-    자연스러운 두 유형(지원동기·자기소개) 중 하나를 무작위로 낸다.
+    고정 문장으로 박제한다.
 
-    주의: 첫 질문으로 둘 중 하나가 나오므로, 이후 본문 질문에서는 두 유형 모두
-    다시 나오지 않아야 한다(프론트 buildQuestionPlan 의 풀/섹션에서 intro·
-    motivation 을 제외해 둔다).
+    (지원동기·자기소개 중 무작위로 내던 적이 있었으나, 도입부에 두 유형이 함께
+    나오는 경우가 있어 첫 질문은 항상 지원동기로 통일했다.)
+
+    주의: 첫 질문이 지원동기로 나오므로, 이후 본문 질문에서도 지원동기형이
+    다시 나오지 않아야 한다(프론트 buildQuestionPlan 의 풀/섹션에서 motivation
+    을 제외해 둔다).
 
     topic(직무)이 있으면 자연스럽게 녹인다.
     """
     role = (topic or "").strip()
     has_role = bool(role) and role != "면접"  # 일반 명사("면접")/빈 값이면 직무 미특정
-    if random.random() < 0.5:
-        # 자기소개형
-        if has_role:
-            return f"먼저 간단한 자기소개 부탁드립니다. {role} 직무에 지원하신 본인의 강점을 중심으로 말씀해 주세요."
-        return "먼저 간단한 자기소개 부탁드립니다. 본인의 강점을 중심으로 말씀해 주세요."
-    # 지원동기형
     if has_role:
         return f"먼저 지원동기가 궁금합니다. {role} 직무와 회사에 지원하신 이유를 말씀해 주세요."
     return "먼저 지원동기가 궁금합니다. 이 직무·회사에 지원하신 이유를 말씀해 주세요."
