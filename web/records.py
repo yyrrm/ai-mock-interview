@@ -5,6 +5,7 @@ web/records.py — 면접 기록 저장/조회 API
 사용자별로 조회한다. 모든 요청은 세션 로그인 상태여야 한다.
 """
 from flask import Blueprint, request, jsonify
+from sqlalchemy.exc import IntegrityError
 
 from models import db, InterviewRecord
 from auth import current_user
@@ -118,14 +119,39 @@ def create_record():
     answer_eval = _clean_answer_eval(data.get("answer_eval"))
     # 질문-답변 전문(선택). 기록에서 실제 대화를 다시 볼 수 있게 저장.
     qa = _clean_qa(data.get("qa"))
+    # 멱등성 키(면접 세션 ID). 같은 면접을 '기록 저장' 재시도/연타로 여러 번
+    # 저장해도 한 건만 남기기 위함. 비어 있으면 멱등성 처리를 하지 않는다.
+    client_id = data.get("client_id")
+    if not isinstance(client_id, str) or not client_id.strip():
+        client_id = None
+    else:
+        client_id = client_id.strip()[:64]
+
+    # 이미 같은 (user_id, client_id) 기록이 있으면 새로 만들지 않고 그대로 반환한다.
+    if client_id is not None:
+        existing = InterviewRecord.query.filter_by(
+            user_id=user.id, client_id=client_id
+        ).first()
+        if existing is not None:
+            return jsonify({"ok": True, "record": existing.to_dict()})
 
     try:
         rec = InterviewRecord(
             user_id=user.id, overall=overall, scores=cleaned,
-            answer_eval=answer_eval, qa=qa,
+            answer_eval=answer_eval, qa=qa, client_id=client_id,
         )
         db.session.add(rec)
         db.session.commit()
+    except IntegrityError:
+        # 동시 요청이 같은 client_id 로 먼저 INSERT 한 경우(유니크 위반) →
+        # 기존 기록을 찾아 반환한다(중복 생성 방지의 최종 방어선).
+        db.session.rollback()
+        existing = InterviewRecord.query.filter_by(
+            user_id=user.id, client_id=client_id
+        ).first()
+        if existing is not None:
+            return jsonify({"ok": True, "record": existing.to_dict()})
+        return jsonify({"ok": False, "msg": "기록 저장 중 오류가 발생했습니다."}), 500
     except Exception as e:
         db.session.rollback()
         print("기록 저장 오류:", e)

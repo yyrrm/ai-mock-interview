@@ -130,6 +130,10 @@ class InterviewRecord(db.Model):
     # 질문-답변 전문 [{"question": str, "answer": str}, ...]. 기록에서 실제 대화를
     # 다시 볼 수 있게 저장한다. 구버전 기록/무응답이면 NULL.
     qa = db.Column(db.JSON, nullable=True)
+    # 클라이언트가 보낸 면접 세션 ID(멱등성 키). 같은 면접을 '기록 저장' 버튼으로
+    # 여러 번/재시도로 저장해도 (user_id, client_id) 가 같으면 새 기록을 만들지
+    # 않고 기존 기록을 재사용한다. 구버전 기록은 NULL(중복 방지 대상 아님).
+    client_id = db.Column(db.String(64), nullable=True)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
     user = db.relationship(
@@ -137,8 +141,12 @@ class InterviewRecord(db.Model):
     )
 
     # 사용자별 최신순 조회(filter user_id + order created_at desc) 최적화용 복합 인덱스
+    # + (user_id, client_id) 유니크: 같은 면접의 중복 저장을 DB 차원에서 막는다.
+    #   client_id 가 NULL 인 행은 MySQL 유니크 인덱스에서 중복으로 보지 않으므로
+    #   (구버전/멱등성 키 미전송) 여러 NULL 이 공존해도 문제없다.
     __table_args__ = (
         db.Index("idx_records_user_created", "user_id", "created_at"),
+        db.Index("uq_records_user_client", "user_id", "client_id", unique=True),
     )
 
     def to_dict(self):
@@ -165,6 +173,8 @@ def ensure_schema_migrations():
     new_cols = {
         "answer_eval": "ALTER TABLE interview_records ADD COLUMN answer_eval JSON NULL",
         "qa": "ALTER TABLE interview_records ADD COLUMN qa JSON NULL",
+        # 멱등성 키(면접 세션 ID). 같은 면접의 중복 저장을 막는 데 쓴다.
+        "client_id": "ALTER TABLE interview_records ADD COLUMN client_id VARCHAR(64) NULL",
     }
     try:
         existing = {c["name"] for c in inspect(db.engine).get_columns("interview_records")}
@@ -182,3 +192,21 @@ def ensure_schema_migrations():
             print(f"[db] interview_records.{col} 컬럼 추가됨")
         except Exception as e:
             print(f"[db] {col} 마이그레이션 건너뜀: {e}")
+
+    # (user_id, client_id) 유니크 인덱스 — 동시 요청/재시도 시 DB 가 최종 방어선.
+    # 이미 있으면(중복 생성 시도) 조용히 넘어간다. 기존 NULL client_id 행들은
+    # MySQL 에서 유니크 위반으로 보지 않으므로 인덱스 생성이 막히지 않는다.
+    try:
+        idx_names = {i["name"] for i in inspect(db.engine).get_indexes("interview_records")}
+    except Exception:
+        idx_names = set()
+    if "uq_records_user_client" not in idx_names:
+        try:
+            with db.engine.begin() as conn:
+                conn.execute(text(
+                    "CREATE UNIQUE INDEX uq_records_user_client "
+                    "ON interview_records (user_id, client_id)"
+                ))
+            print("[db] interview_records uq_records_user_client 유니크 인덱스 추가됨")
+        except Exception as e:
+            print(f"[db] uq_records_user_client 인덱스 건너뜀: {e}")
