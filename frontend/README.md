@@ -7,7 +7,6 @@
 
 - 자기소개서 4문항(성장과정·지원동기·장단점·입사후포부)을 작성 → `POST /api/cover-letter` 로 분석, 첫 질문 생성
 - 답변 메모 입력 후 "다음 질문" → `POST /api/question` 으로 꼬리질문 생성 (총 `TARGET_QUESTIONS`개)
-- 성장과정은 질문 비중이 낮게 설정됨 (백엔드 guidance)
 
 ## 빌드 / 개발
 
