@@ -24,6 +24,7 @@ const QUESTIONS = [
 // 한 번의 면접에서 진행할 질문 개수 (AI가 동적으로 생성).
 // 사용자가 면접 준비 화면에서 7 또는 10 중 하나를 고른다.
 // 구성은 buildQuestionPlan() 참고(첫=지원동기 고정, 끝=마지막 말 고정).
+// 자기소개형 질문은 면접 전체에서 내지 않는다(첫 질문은 지원동기로 통일).
 const QUESTION_COUNT_OPTIONS = [7, 10] as const;
 const DEFAULT_QUESTION_COUNT = 7;
 
@@ -36,22 +37,21 @@ const COVER_SECTIONS = [
 ] as const;
 
 // 자소서 주질문에 쓸 항목 순서.
-// 첫 질문은 백엔드에서 '지원동기' 또는 '자기소개' 중 무작위로 박제되므로,
-// 본문 주질문에서는 그 두 유형(motivation·intro)을 다시 내지 않는다.
-// → motivation 을 주질문 순서에서 제외(자소서에 작성은 받되 질문은 만들지 않음).
+// 첫 질문은 백엔드에서 '지원동기'로 박제되므로 본문 주질문에서는 motivation 을 다시
+// 내지 않는다(자소서에 작성은 받되 질문은 만들지 않음).
 // '입사 후 포부(aspiration)'도 면접 질문에서 전면 제외하기로 해 순서에서 뺀다.
 const SECTION_ORDER = ["strength_weakness", "growth"] as const;
 
 // 카테고리 풀에서 '랜덤 선택' 대상이 되는 카테고리들(백엔드 CATEGORY_POOL key와 일치).
 // 사용자 명세의 {3 경험, 5 프로젝트, 6 인성, 7 상황대처}.
-// 1(자기소개)·2(지원동기)=첫 질문에서 둘 중 하나가 이미 나오므로 본문 풀에서 제외,
-// 4(직무지식)=tech 슬롯, 8(마지막)=closing 으로 별도 처리.
+// 2(지원동기)=첫 질문으로 이미 고정돼 본문 풀에서 제외, 1(자기소개)=면접 전체에서
+// 내지 않기로 해 제외, 4(직무지식)=tech 슬롯, 8(마지막)=closing 으로 별도 처리.
 const CATEGORY_POOL_KEYS = ["experience", "project", "personality", "situation"] as const;
 
 // 한 면접의 질문 한 칸(슬롯)이 어떤 종류인지. nextQuestion 이 이 종류를 보고
 // /api/question 에 보낼 인자(section/category/tech)를 정한다.
 type QuestionSlot =
-  | { kind: "first" }                          // 첫 질문(지원동기 또는 자기소개) — /api/cover-letter 가 생성, 플랜 자리표시용
+  | { kind: "first" }                          // 첫 질문(지원동기) — /api/cover-letter 가 생성, 플랜 자리표시용
   | { kind: "section"; section: string }       // 자소서 항목 주질문
   | { kind: "category"; category: string }     // 카테고리 풀 씨앗 질문
   | { kind: "tech" }                           // 직무·전공 지식
@@ -71,10 +71,10 @@ function shuffled<T>(arr: readonly T[]): T[] {
 // 면접 시작 시 1회 호출해 질문 슬롯 플랜(인덱스별 종류)을 만든다.
 // 카테고리 풀 선택은 여기서 한 번 확정해 같은 면접 내내 고정된다.
 //
-// 첫 질문은 백엔드에서 '지원동기' 또는 '자기소개' 중 무작위로 박제되며,
-// 이후 본문에서는 그 두 유형이 다시 나오지 않는다(풀·섹션에서 제외).
-// 7문항:  [도입(동기/소개), 자소서1, 풀a, 풀b, 직무지식, 꼬리, 마지막말]
-// 10문항: [도입(동기/소개), 자소서1, 자소서2, 풀a, 풀b, 풀c, 풀d, 직무지식, 꼬리, 마지막말]
+// 첫 질문은 백엔드에서 '지원동기'로 박제되며, 이후 본문에서는 지원동기·자기소개
+// 유형이 나오지 않는다(풀·섹션에서 제외).
+// 7문항:  [지원동기, 자소서1, 풀a, 풀b, 직무지식, 꼬리, 마지막말]
+// 10문항: [지원동기, 자소서1, 자소서2, 풀a, 풀b, 풀c, 풀d, 직무지식, 꼬리, 마지막말]
 function buildQuestionPlan(count: number): QuestionSlot[] {
   const isTen = count >= 10;
   const sectionCount = isTen ? 2 : 1;        // 자소서 주질문 개수
@@ -2786,82 +2786,9 @@ function ResultScreen({
       ? "양호한 성과입니다."
       : "더 연습해 봐요!";
 
-  // PDF 저장 — 예전엔 window.print()로 브라우저 인쇄창을 띄웠는데, 사용자가 직접
-  // '대상: PDF로 저장'을 골라야 하고 카드가 페이지 경계에서 잘리는 문제가 있었다.
-  // 이제 리포트 영역(#report-print-area)을 캡처해 A4 여러 장으로 잘라 바로 .pdf로 내려받는다.
-  const [pdfStatus, setPdfStatus] = useState<"idle" | "generating">("idle");
-  const handleDownloadPdf = useCallback(async () => {
-    const area = document.getElementById("report-print-area");
-    if (!area || pdfStatus === "generating") return;
-    setPdfStatus("generating");
-    try {
-      // 무거운 라이브러리는 PDF 저장을 누를 때만 로드(메인 번들 비대화 방지).
-      // html2canvas-pro 를 쓴다 — 원본 html2canvas(1.4.1)는 Tailwind v4 가
-      // 내보내는 oklch() 색상을 파싱하지 못해 캡처 중 예외로 터졌다(=PDF 저장 실패).
-      // pro 포크는 oklch/lab/color-mix 를 지원하는 드롭인 대체재다.
-      const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
-        import("html2canvas-pro"),
-        import("jspdf"),
-      ]);
-      const canvas = await html2canvas(area, {
-        scale: 2, // 선명도 확보(레티나급)
-        backgroundColor: "#ffffff",
-        useCORS: true,
-        logging: false,
-        windowWidth: area.scrollWidth,
-      });
-
-      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-      const pageW = pdf.internal.pageSize.getWidth();
-      const pageH = pdf.internal.pageSize.getHeight();
-      // 캔버스(px) 1장의 폭을 A4 폭에 맞추고, 그 비율로 세로를 환산해
-      // A4 한 장 높이만큼씩 잘라 여러 페이지에 나눠 붙인다(내용 잘림 방지).
-      const pxPerMm = canvas.width / pageW;
-      const pageHpx = pageH * pxPerMm;
-      const totalPages = Math.ceil(canvas.height / pageHpx);
-
-      for (let page = 0; page < totalPages; page++) {
-        const sliceHpx = Math.min(pageHpx, canvas.height - page * pageHpx);
-        const slice = document.createElement("canvas");
-        slice.width = canvas.width;
-        slice.height = sliceHpx;
-        const ctx = slice.getContext("2d");
-        if (!ctx) continue;
-        ctx.fillStyle = "#ffffff";
-        ctx.fillRect(0, 0, slice.width, slice.height);
-        ctx.drawImage(
-          canvas,
-          0, page * pageHpx, canvas.width, sliceHpx,
-          0, 0, canvas.width, sliceHpx,
-        );
-        const imgData = slice.toDataURL("image/jpeg", 0.92);
-        if (page > 0) pdf.addPage();
-        pdf.addImage(imgData, "JPEG", 0, 0, pageW, sliceHpx / pxPerMm);
-      }
-
-      const stamp = new Date().toISOString().slice(0, 10);
-      pdf.save(`AI모의면접_리포트_${stamp}.pdf`);
-    } catch (err) {
-      // 진짜 원인을 콘솔에 남겨 진단을 돕고, 사용자에겐 원인별로 다른 안내를 준다.
-      console.error("PDF 저장 실패", err);
-      const msg = String((err as Error)?.message ?? err);
-      // 동적 import 실패(청크 로드 오류) — 보통 새 배포 직후 캐시가 어긋났거나
-      // 네트워크 단절. 새로고침하면 해결되는 경우가 많아 그렇게 안내한다.
-      const isChunkLoadError =
-        /import|chunk|dynamically imported|Failed to fetch/i.test(msg);
-      alert(
-        isChunkLoadError
-          ? "PDF 모듈을 불러오지 못했습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요."
-          : "PDF 저장에 실패했습니다. 다른 브라우저(최신 Chrome 권장)에서 다시 시도해 주세요. 문제가 계속되면 '기록 저장'으로 결과를 보관할 수 있습니다.",
-      );
-    } finally {
-      setPdfStatus("idle");
-    }
-  }, [pdfStatus]);
-
   return (
     <div className="min-h-screen flex flex-col screen-enter">
-      <nav className="print-hide navy-gradient px-3 sm:px-6 py-4 flex items-center justify-between gap-2 shadow-lg">
+      <nav className="navy-gradient px-3 sm:px-6 py-4 flex items-center justify-between gap-2 shadow-lg">
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center shrink-0">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2">
@@ -2884,7 +2811,7 @@ function ResultScreen({
         </button>
       </nav>
 
-      <div id="report-print-area" className="flex-1 max-w-5xl mx-auto w-full px-6 py-10">
+      <div className="flex-1 max-w-5xl mx-auto w-full px-6 py-10">
         {invalidReason ? (
           <div className="flex flex-col items-center justify-center min-h-[60vh] text-center screen-enter">
             <div className="w-20 h-20 rounded-full bg-orange-100 flex items-center justify-center mb-6 shadow-md">
@@ -3066,7 +2993,7 @@ function ResultScreen({
                     ))}
                   </div>
 
-                  <div className="print-hide mt-6 flex flex-col sm:flex-row gap-3 sm:justify-end">
+                  <div className="mt-6 flex flex-col sm:flex-row gap-3 sm:justify-end">
                     {/* 기록 저장 — 면접 종료 시 계정에 자동 저장되며, 이 버튼이 상태를
                         보여준다. 실패했을 때만 다시 누르면 재시도한다(중복 기록 방지). */}
                     <button
@@ -3088,15 +3015,6 @@ function ResultScreen({
                         : recordSaveStatus === "error"
                         ? "기록 저장 다시 시도"
                         : "기록 저장"}
-                    </button>
-                    {/* PDF 저장 — 리포트 영역을 캡처해 A4로 잘라 바로 .pdf로 내려받는다(인쇄창 없이). */}
-                    <button
-                      data-testid="button-download-report"
-                      onClick={handleDownloadPdf}
-                      disabled={pdfStatus === "generating"}
-                      className="px-5 py-2.5 border border-[hsl(var(--border))] text-[hsl(var(--primary))] text-sm font-semibold rounded-xl hover:bg-[hsl(var(--secondary))] transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-                    >
-                      {pdfStatus === "generating" ? "PDF 생성 중…" : "PDF 저장"}
                     </button>
                     <button
                       data-testid="button-retry"
