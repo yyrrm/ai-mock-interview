@@ -142,7 +142,7 @@ class GazeEvaluator:
             fb.append("시선이 조금 분산됩니다. 한 곳을 차분히 응시해보세요.")
 
         if not fb:
-            fb.append("카메라를 안정적으로 응시했습니다. 좋은 아이컨택입니다.")
+            fb.append("카메라를 안정적으로 응시했습니다. 시선 처리가 좋습니다.")
 
         scores = {"centered": centered_score, "stability": stability_score}
         metrics = {

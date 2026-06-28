@@ -1093,10 +1093,10 @@ function ResultShowcase() {
             <h3 className="font-bold text-[hsl(var(--primary))] mb-4">AI 피드백 요약</h3>
             <div className="flex flex-col gap-3">
               {[
-                { type: "good", text: "카메라를 안정적으로 응시했습니다. 좋은 아이컨택입니다." },
+                { type: "good", text: "카메라를 안정적으로 응시했습니다. 시선 처리가 좋습니다." },
                 { type: "good", text: "자연스럽고 안정적인 표정을 잘 유지했습니다." },
                 { type: "improve", text: "상체 흔들림이 조금 있습니다. 자세를 안정적으로 유지해보세요." },
-                { type: "improve", text: "말 속도가 약간 빠릅니다. 130~180 WPM을 목표로 해보세요." },
+                { type: "improve", text: "말 속도가 약간 빠릅니다. 조금 더 천천히 또박또박 말해보세요." },
               ].map((fb, i) => (
                 <div
                   key={i}
@@ -1215,7 +1215,7 @@ function HomeScreen({
           <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-[hsl(var(--accent))/0.1] border border-[hsl(var(--accent))/0.2] rounded-full mb-6">
             <span className="w-1.5 h-1.5 rounded-full bg-[hsl(var(--accent))] recording-dot" />
             <span className="text-xs font-semibold text-[hsl(var(--accent))]">
-              AI 멀티모달 면접 분석 플랫폼
+              AI 종합 면접 분석 플랫폼
             </span>
           </div>
 
@@ -1307,7 +1307,7 @@ function HomeScreen({
                   </svg>
                 ),
                 title: "시선 분석",
-                desc: "시선이 카메라를 안정적으로 향하는지, 한쪽으로 쏠리거나 흔들리지는 않는지 실시간으로 분석해 아이컨택을 평가합니다.",
+                desc: "시선이 카메라를 안정적으로 향하는지, 한쪽으로 쏠리거나 흔들리지는 않는지 실시간으로 분석해 시선 처리를 평가합니다.",
               },
               {
                 // 표정 — 미소 짓는 얼굴 + 표정 포인트 일러스트
@@ -1449,7 +1449,7 @@ function HomeScreen({
             {[
               { step: "01", title: "자기소개서 작성", desc: "성장과정·지원동기·장단점·입사 후 포부를 작성하면 AI가 내용을 분석해 맞춤 질문을 준비합니다." },
               { step: "02", title: "AI 모의면접 진행", desc: "실전과 동일한 환경에서 면접을 진행합니다. AI가 답변을 바탕으로 꼬리 질문을 생성합니다." },
-              { step: "03", title: "멀티모달 성과 리포트", desc: "시선·표정·음성·자세를 종합한 리포트와 개선 가이드를 즉시 제공합니다." },
+              { step: "03", title: "종합 성과 리포트", desc: "시선·표정·음성·자세를 종합한 리포트와 개선 가이드를 즉시 제공합니다." },
             ].map((s) => (
               <div key={s.step} className="text-center">
                 <div className="w-16 h-16 rounded-full bg-white/10 border border-white/20 flex items-center justify-center mx-auto mb-4">
