@@ -2753,6 +2753,66 @@ function ResultScreen({
       ? "양호한 성과입니다."
       : "더 연습해 봐요!";
 
+  // PDF 저장 — 예전엔 window.print()로 브라우저 인쇄창을 띄웠는데, 사용자가 직접
+  // '대상: PDF로 저장'을 골라야 하고 카드가 페이지 경계에서 잘리는 문제가 있었다.
+  // 이제 리포트 영역(#report-print-area)을 캡처해 A4 여러 장으로 잘라 바로 .pdf로 내려받는다.
+  const [pdfStatus, setPdfStatus] = useState<"idle" | "generating">("idle");
+  const handleDownloadPdf = useCallback(async () => {
+    const area = document.getElementById("report-print-area");
+    if (!area || pdfStatus === "generating") return;
+    setPdfStatus("generating");
+    try {
+      // 무거운 라이브러리는 PDF 저장을 누를 때만 로드(메인 번들 비대화 방지).
+      const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+        import("html2canvas"),
+        import("jspdf"),
+      ]);
+      const canvas = await html2canvas(area, {
+        scale: 2, // 선명도 확보(레티나급)
+        backgroundColor: "#ffffff",
+        useCORS: true,
+        logging: false,
+        windowWidth: area.scrollWidth,
+      });
+
+      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+      // 캔버스(px) 1장의 폭을 A4 폭에 맞추고, 그 비율로 세로를 환산해
+      // A4 한 장 높이만큼씩 잘라 여러 페이지에 나눠 붙인다(내용 잘림 방지).
+      const pxPerMm = canvas.width / pageW;
+      const pageHpx = pageH * pxPerMm;
+      const totalPages = Math.ceil(canvas.height / pageHpx);
+
+      for (let page = 0; page < totalPages; page++) {
+        const sliceHpx = Math.min(pageHpx, canvas.height - page * pageHpx);
+        const slice = document.createElement("canvas");
+        slice.width = canvas.width;
+        slice.height = sliceHpx;
+        const ctx = slice.getContext("2d");
+        if (!ctx) continue;
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, slice.width, slice.height);
+        ctx.drawImage(
+          canvas,
+          0, page * pageHpx, canvas.width, sliceHpx,
+          0, 0, canvas.width, sliceHpx,
+        );
+        const imgData = slice.toDataURL("image/jpeg", 0.92);
+        if (page > 0) pdf.addPage();
+        pdf.addImage(imgData, "JPEG", 0, 0, pageW, sliceHpx / pxPerMm);
+      }
+
+      const stamp = new Date().toISOString().slice(0, 10);
+      pdf.save(`AI모의면접_리포트_${stamp}.pdf`);
+    } catch (err) {
+      console.error("PDF 저장 실패", err);
+      alert("PDF 저장에 실패했습니다. 잠시 후 다시 시도해 주세요.");
+    } finally {
+      setPdfStatus("idle");
+    }
+  }, [pdfStatus]);
+
   return (
     <div className="min-h-screen flex flex-col screen-enter">
       <nav className="print-hide navy-gradient px-3 sm:px-6 py-4 flex items-center justify-between gap-2 shadow-lg">
@@ -2983,13 +3043,14 @@ function ResultScreen({
                         ? "기록 저장 다시 시도"
                         : "기록 저장"}
                     </button>
-                    {/* PDF 저장 — 브라우저 인쇄 대화상자에서 '대상: PDF로 저장' 선택. */}
+                    {/* PDF 저장 — 리포트 영역을 캡처해 A4로 잘라 바로 .pdf로 내려받는다(인쇄창 없이). */}
                     <button
                       data-testid="button-download-report"
-                      onClick={() => window.print()}
-                      className="px-5 py-2.5 border border-[hsl(var(--border))] text-[hsl(var(--primary))] text-sm font-semibold rounded-xl hover:bg-[hsl(var(--secondary))] transition-colors"
+                      onClick={handleDownloadPdf}
+                      disabled={pdfStatus === "generating"}
+                      className="px-5 py-2.5 border border-[hsl(var(--border))] text-[hsl(var(--primary))] text-sm font-semibold rounded-xl hover:bg-[hsl(var(--secondary))] transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                     >
-                      PDF 저장
+                      {pdfStatus === "generating" ? "PDF 생성 중…" : "PDF 저장"}
                     </button>
                     <button
                       data-testid="button-retry"
