@@ -245,6 +245,8 @@ type InterviewResult = {
   // 답변 내용 평가(클로드). status 로 로딩/성공/실패를 구분한다.
   answerEval?: AnswerEval;
   answerEvalStatus?: AnswerEvalStatus;
+  // 채점에 보낸 질문-답변(코멘트 Q번호 병기·질문 목록용). 화면 표시용으로만 보관.
+  qa?: { question: string; answer: string }[];
   // 평가 무효 사유(예: 3분 미만). 있으면 점수를 매기지 않고 저장도 하지 않는다.
   invalidReason?: string;
 };
@@ -671,7 +673,10 @@ export default function App() {
     const willEvaluate = voice.noSpeech !== true && answeredQa.length > 0;
 
     // 채점을 할 경우, 결과 카드를 '로딩' 상태로 먼저 띄운다(도착/실패하면 갱신).
-    setResult(willEvaluate ? { ...built, answerEvalStatus: "loading" } : built);
+    // qa(answeredQa)를 같이 담아, 평가 카드의 질문 목록·코멘트 Q번호 병기에 쓴다.
+    setResult(
+      willEvaluate ? { ...built, answerEvalStatus: "loading", qa: answeredQa } : built
+    );
 
     // 끝까지 완료 + 측정된 점수가 하나라도 있으면 기록으로 저장한다(로그인 사용자, 서버 DB).
     // 저장 완료를 await 해서 결과/기록 화면 진입 시 누락(경쟁 조건)을 막는다.
@@ -2382,16 +2387,62 @@ const GRADE_STYLE: Record<string, string> = {
   하: "bg-red-100 text-red-700 border-red-200",
 };
 
+// 평가 카드에 넘기는 질문-답변 쌍. 백엔드가 채점에 보는 [Q1]..[Qn] 순서와
+// 동일(answeredQa / 기록의 r.qa). 그래서 코멘트의 'Q3' = qa[2] 로 매핑된다.
+type QaPair = { question: string; answer: string };
+
+// 질문 원문(한두 문장)을 10~15자 짧은 라벨로 줄인다. LLM 호출 없이 프론트에서 처리.
+// 문장부호 앞까지 우선 자르고(자연스러운 절단), 그래도 길면 13자+… 로 자른다.
+function shortenQ(q: string): string {
+  const s = (q || "").replace(/\s+/g, " ").trim();
+  if (!s) return "";
+  const head = (s.split(/[?．.…·,]/)[0] || s).trim() || s;
+  return head.length <= 15 ? head : head.slice(0, 13) + "…";
+}
+
+// 코멘트/종합 텍스트 속 'Q3' 같은 참조에 질문 요약을 병기한다.
+// 핵심 안전장치: string.replace 로 치환하지 않고 React 노드 배열로 '분할 렌더'한다
+// (원문 손실 0, XSS 없음). 매핑이 안 되거나(범위 밖·빈 질문) 요약이 비면 원문을
+// 그대로 둔다 → 어떤 경우에도 코멘트 본문이 깨지지 않는다.
+function annotateQ(text: string, qa?: QaPair[]): React.ReactNode {
+  if (!text || !qa || qa.length === 0) return text;
+  const re = /Q\s?(\d{1,2})/g; // 'Q3' 'Q 3' 'Q12' 매칭. 'A3'(답변번호)는 안 잡힘.
+  const parts: React.ReactNode[] = [];
+  let last = 0;
+  let key = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    const n = parseInt(m[1], 10);
+    const summary = shortenQ(qa[n - 1]?.question ?? ""); // Q3 → qa[2]
+    if (!summary) continue; // 매핑 실패/빈 질문 → 원문 그대로 둠(병기 생략)
+    parts.push(text.slice(last, m.index));
+    parts.push(
+      <span key={key++} className="whitespace-nowrap">
+        {m[0]}
+        <span className="text-[hsl(var(--primary))]">({summary})</span>
+      </span>
+    );
+    last = m.index + m[0].length;
+  }
+  if (last === 0) return text; // 매치 0개 → 원문 그대로(불필요한 배열화 방지)
+  parts.push(text.slice(last));
+  return parts;
+}
+
 function AnswerEvalCard({
   answerEval,
   status,
+  qa,
 }: {
   answerEval?: AnswerEval;
   status?: AnswerEvalStatus;
+  qa?: QaPair[]; // 질문-답변 전문(코멘트 Q번호 병기 + 질문 목록용). 없으면 기존 동작.
 }) {
   // 상태 결정: 명시 status 우선, 없으면 데이터 유무로 추론(기록 화면 재사용 대비).
   const effective: AnswerEvalStatus =
     status ?? (answerEval && answerEval.items.length > 0 ? "done" : "loading");
+  const [qOpen, setQOpen] = useState(false);
+  const hasQa = !!qa && qa.length > 0;
 
   return (
     <div className="navy-card rounded-2xl p-6">
@@ -2405,6 +2456,27 @@ function AnswerEvalCard({
         목소리·표정 같은 전달력과 별개로, 답변 <b>내용</b>을 평가했습니다. 점수가 아닌
         참고용 코멘트로 활용하세요.
       </p>
+
+      {/* (A) 질문 목록: 코멘트의 'Q3' 등이 무슨 질문이었는지 찾아볼 수 있게. */}
+      {effective === "done" && hasQa && (
+        <div className="mb-4">
+          <button
+            onClick={() => setQOpen((v) => !v)}
+            className="text-xs font-semibold text-[hsl(var(--accent))] hover:underline"
+          >
+            {qOpen ? "질문 목록 접기 ▲" : `질문 목록 보기 (${qa!.length}) ▼`}
+          </button>
+          {qOpen && (
+            <ol className="mt-2 space-y-1 rounded-xl bg-[hsl(var(--secondary))] p-3">
+              {qa!.map((p, i) => (
+                <li key={i} className="text-xs text-muted-foreground">
+                  <b className="text-[hsl(var(--primary))]">Q{i + 1}.</b> {shortenQ(p.question) || "(질문)"}
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+      )}
 
       {effective === "loading" ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground py-6 justify-center">
@@ -2437,7 +2509,7 @@ function AnswerEvalCard({
                 <div>
                   <p className="text-sm font-semibold text-[hsl(var(--primary))]">{it.label}</p>
                   {it.comment && (
-                    <p className="text-sm text-muted-foreground leading-relaxed">{it.comment}</p>
+                    <p className="text-sm text-muted-foreground leading-relaxed">{annotateQ(it.comment, qa)}</p>
                   )}
                 </div>
               </div>
@@ -2446,7 +2518,7 @@ function AnswerEvalCard({
           {answerEval.overall && (
             <div className="mt-5 rounded-xl bg-[hsl(var(--secondary))] p-4">
               <p className="text-xs font-semibold text-[hsl(var(--primary))] mb-1">종합 코멘트</p>
-              <p className="text-sm text-muted-foreground leading-relaxed">{answerEval.overall}</p>
+              <p className="text-sm text-muted-foreground leading-relaxed">{annotateQ(answerEval.overall, qa)}</p>
             </div>
           )}
         </>
@@ -2707,6 +2779,7 @@ function ResultScreen({
                 <AnswerEvalCard
                   answerEval={result!.answerEval}
                   status={result!.answerEvalStatus}
+                  qa={result!.qa}
                 />
               </div>
             )}
@@ -2776,14 +2849,14 @@ function HistoryRecordCard({ record: r }: { record: InterviewRecord }) {
                   <div>
                     <p className="text-xs font-semibold text-[hsl(var(--primary))]">{it.label}</p>
                     {it.comment && (
-                      <p className="text-xs text-muted-foreground leading-relaxed">{it.comment}</p>
+                      <p className="text-xs text-muted-foreground leading-relaxed">{annotateQ(it.comment, r.qa ?? undefined)}</p>
                     )}
                   </div>
                 </div>
               ))}
               {r.answer_eval!.overall && (
                 <div className="mt-2 rounded-lg bg-[hsl(var(--secondary))] p-3">
-                  <p className="text-xs text-muted-foreground leading-relaxed">{r.answer_eval!.overall}</p>
+                  <p className="text-xs text-muted-foreground leading-relaxed">{annotateQ(r.answer_eval!.overall, r.qa ?? undefined)}</p>
                 </div>
               )}
             </div>
