@@ -286,9 +286,10 @@ type AnswerEval = {
   overall: string;
 };
 
-// 채점 진행 상태. "loading"(도착 대기)·"done"(성공)·"failed"(실패→안내 표시).
-// 이 상태가 없으면 실패 시 카드가 영영 로딩 스피너로 남아 버린다.
-type AnswerEvalStatus = "loading" | "done" | "failed";
+// 채점 진행 상태. "loading"(도착 대기)·"done"(성공)·"failed"(실패→안내 표시)·
+// "empty"(인식된 답변이 없어 평가를 시작조차 안 함→안내 표시).
+// 이 상태가 없으면 무응답·실패 시 카드가 영영 로딩 스피너로 남아 버린다.
+type AnswerEvalStatus = "loading" | "done" | "failed" | "empty";
 
 type InterviewResult = {
   overall: number;
@@ -754,8 +755,13 @@ export default function App() {
 
     // 채점을 할 경우, 결과 카드를 '로딩' 상태로 먼저 띄운다(도착/실패하면 갱신).
     // qa(answeredQa)를 같이 담아, 평가 카드의 질문 목록·코멘트 Q번호 병기에 쓴다.
+    // 인식된 답변이 없으면(willEvaluate=false) 채점을 시작조차 안 하므로 'empty'
+    // 상태로 명시한다 — 그래야 평가 카드가 무한 로딩 스피너 대신 '인식된 답변이
+    // 없어 평가를 진행하지 않았다'는 안내를 띄운다(status 미지정 시 loading 추론됨).
     setResult(
-      willEvaluate ? { ...built, answerEvalStatus: "loading", qa: answeredQa } : built
+      willEvaluate
+        ? { ...built, answerEvalStatus: "loading", qa: answeredQa }
+        : { ...built, answerEvalStatus: "empty" }
     );
 
     // 끝까지 완료 + 측정된 점수가 하나라도 있으면 기록으로 저장한다(로그인 사용자, 서버 DB).
@@ -2967,6 +2973,18 @@ function AnswerEvalCard({
             <path d="M21 12a9 9 0 1 1-6.219-8.56" />
           </svg>
           답변 내용을 분석하는 중입니다…
+        </div>
+      ) : effective === "empty" ? (
+        // 인식된 답변이 없어 내용 평가를 진행하지 않은 경우 — 무한 스피너 대신
+        // 왜 평가가 없는지 분명히 안내한다(전달력 점수는 별개로 측정됨).
+        <div className="flex flex-col items-center gap-2 text-sm text-muted-foreground py-6 text-center">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2">
+            <path d="M3 18v-6a9 9 0 0 1 18 0v6" />
+            <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z" />
+            <line x1="2" y1="2" x2="22" y2="22" />
+          </svg>
+          <span>인식된 답변이 없어 내용 평가를 진행하지 않았어요.</span>
+          <span className="text-xs">마이크로 답변하면 다음 면접부터 내용 평가가 제공됩니다. (전달력 점수는 정상 측정됨)</span>
         </div>
       ) : effective === "failed" || !answerEval ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground py-6 justify-center">
