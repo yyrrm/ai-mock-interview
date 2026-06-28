@@ -286,6 +286,8 @@ def api_question():
         return jsonify({"ok": False, "msg": msg}), 429
 
     try:
+        import time as _t
+        _t0 = _t.time()
         question = make_question(
             answer_text,
             topic=topic,
@@ -296,6 +298,9 @@ def api_question():
             category=category,
             tech=tech,
         )
+        # 실제 질문 생성 소요시간을 journal 에 남긴다(병목 진단용).
+        logging.info("TIMING /api/question %.2fs (mode=%s)", _t.time() - _t0,
+                     section or category or ("tech" if tech else "followup"))
         return jsonify({"ok": True, "question": question})
     except Exception as e:
         return jsonify({"ok": False, "msg": f"질문 생성 중 오류: {e}"}), 500

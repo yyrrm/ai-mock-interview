@@ -46,6 +46,8 @@ def synthesize():
         voice = DEFAULT_VOICE
 
     try:
+        import time as _t, logging as _log
+        _t0 = _t.time()
         resp = client.audio.speech.create(
             model=TTS_MODEL,
             voice=voice,
@@ -55,6 +57,8 @@ def synthesize():
         audio_bytes = getattr(resp, "content", None)
         if audio_bytes is None:
             audio_bytes = resp.read()
+        # 실제 TTS 합성 소요시간을 journal 에 남긴다(병목 진단용).
+        _log.info("TIMING /api/tts %.2fs (chars=%d)", _t.time() - _t0, len(text))
     except Exception as e:
         print("TTS 오류:", e)
         return jsonify({"ok": False, "msg": f"음성 합성 중 오류: {e}"}), 500
