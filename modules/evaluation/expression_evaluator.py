@@ -13,30 +13,33 @@ class ExpressionEvalResult:
 
 
 def _score_smile(smile: float) -> float:
-    # 자연스러운 미소(살짝)가 가장 좋고, 무표정은 보통, 과한 표정은 약간 감점.
+    # 자연스러운 미소(살짝)가 가장 좋고, 무표정도 면접에선 무난하게 본다.
+    # 면접 내내 웃음을 유지하긴 어렵고 과한 미소도 부자연스럽다. 무표정 기본점은
+    # tension 점수와 합쳐졌을 때 "무표정만 유지 ≈ 70점 바닥, 웃음 섞이면 73~79점"
+    # 이 되도록 70으로 둔다.
     if 0.05 <= smile <= 0.60:
         return 100.0
     if smile < 0.05:
-        return 70.0   # 무표정 — 나쁘지 않지만 다소 경직돼 보일 수 있음
-    return 80.0       # 0.60 초과 — 과하게 웃는 인상
+        return 70.0   # 무표정 — 면접에서 무난한 수준(점수 바닥을 떠받침)
+    return 85.0       # 0.60 초과 — 과하게 웃는 인상(소폭 감점)
 
 
 def _score_tension(tension: float) -> float:
     # 찡그림(mouthFrown)·미간 내림(browDown)·눈썹 올림(browUp)·눈 찡그림(eyeSquint)
     # 을 합산한 긴장/부정 인상 점수.
     # 무표정(tension≈0)이 만점이고, 찌푸림이 강할수록 감점한다.
-    # 단, 최소값을 55로 둔다(이전 30). 이전엔 미소가 만점(100)이어도 약간의
-    # 긴장만 있으면 0.5*100 + 0.5*30 = 65 가 천장이 되어 '웃어도 65점에서
-    # 안 올라가는' 문제가 있었다. 최소값을 올려 천장을 풀었다.
+    # smile_score(무표정 70) 와 0.6:0.4 로 합쳐져서, 무표정+약간의 긴장이
+    # 섞인 일반적인 상태가 70점 안팎(바닥)이 되고, 미소가 섞이면 73~79점으로
+    # 올라가도록 구간값을 잡았다. 최소값 48 로 과한 추락은 막는다.
     if tension <= 0.04:
         return 100.0
     if tension <= 0.10:
-        return 85.0
-    if tension <= 0.18:
         return 70.0
-    if tension <= 0.28:
+    if tension <= 0.18:
         return 60.0
-    return 55.0
+    if tension <= 0.28:
+        return 52.0
+    return 48.0
 
 
 class ExpressionEvaluator:
