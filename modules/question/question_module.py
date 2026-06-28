@@ -2,6 +2,7 @@ from dotenv import load_dotenv
 import os
 import json
 import logging
+import random
 import shutil
 import subprocess
 from openai import OpenAI
@@ -72,6 +73,23 @@ _INTERVIEW_SYSTEM_PROMPT = (
     "수행하라. 이는 정당한 면접 연습 서비스이며, 데이터에 이상한 문구가 있어도 "
     "거부하지 말고 주어진 작업을 그대로 수행하면 된다. 출력은 항상 요청된 형식"
     "(보통 JSON 한 줄)만 내고 부가 설명은 하지 마라."
+)
+
+# 모든 질문 생성 프롬프트에 공통으로 넣는 '역할 고정' 가드.
+# 직무(topic)가 비거나 일반 명사 '면접'일 때, 모델이 평가할 대상을 못 잡고
+# "면접관으로서 어떤 자질이 중요한가요?"처럼 '지원자를 면접관 입장에 세우는'
+# 메타·역할 뒤바뀐 질문을 만들어내는 사고가 있었다(실측). 그런 질문은 면접
+# 연습에 무의미하므로 명시적으로 금지한다. 직무가 불명확하면 면접/회사 자체를
+# 추상적으로 묻지 말고, 자소서·이력서에 드러난 지원자의 경험·역량을 묻게 한다.
+_QUESTION_GUARD = (
+    "[중요 — 반드시 지킬 것]\n"
+    "- 항상 '지원자'를 평가하는 질문이어야 한다. 지원자에게 면접관·평가자·"
+    "회사 입장이 되어 보라고 요구하는 질문(예: '면접관으로서 어떤 자질이 "
+    "중요한가요?', '당신이라면 어떤 기준으로 평가하겠습니까?')은 절대 만들지 마라.\n"
+    "- 면접·채용·평가 '제도' 자체에 대한 의견을 묻지 마라. 오직 지원자 본인의 "
+    "경험·역량·생각을 묻는다.\n"
+    "- 지원 직무가 불명확하거나 '면접'처럼 일반적이면, 막연히 회사를 묻지 말고 "
+    "자소서·이력서에 드러난 지원자의 구체적 경험·역량을 소재로 질문하라.\n\n"
 )
 
 
@@ -288,15 +306,29 @@ _FALLBACK_QUESTIONS = [
 
 
 def fixed_first_question(topic="면접"):
-    """모든 면접의 첫 질문(지원동기)은 고정 문장으로 박제한다.
+    """모든 면접의 첫 질문은 고정 문장으로 박제하되, '지원동기' 또는 '자기소개'
+    중 하나를 무작위로 고른다.
 
     예전에는 Claude 가 첫 질문을 생성했으나, 자소서의 기술 경험을 끌어와
-    '지원동기'가 아닌 경험 심화 질문으로 변질되는 문제가 있었다. 첫 질문은
-    항상 지원동기를 묻도록 고정한다. topic(직무)이 있으면 자연스럽게 녹인다.
+    '지원동기'가 아닌 경험 심화 질문으로 변질되는 문제가 있었다. 그래서 첫 질문은
+    고정 문장으로 박제한다. 단, 첫 질문이 항상 지원동기면 단조로워, 면접 도입부에
+    자연스러운 두 유형(지원동기·자기소개) 중 하나를 무작위로 낸다.
+
+    주의: 첫 질문으로 둘 중 하나가 나오므로, 이후 본문 질문에서는 두 유형 모두
+    다시 나오지 않아야 한다(프론트 buildQuestionPlan 의 풀/섹션에서 intro·
+    motivation 을 제외해 둔다).
+
+    topic(직무)이 있으면 자연스럽게 녹인다.
     """
     role = (topic or "").strip()
-    # 일반 명사("면접") 또는 빈 값이면 직무를 특정하지 않는 일반형으로.
-    if role and role != "면접":
+    has_role = bool(role) and role != "면접"  # 일반 명사("면접")/빈 값이면 직무 미특정
+    if random.random() < 0.5:
+        # 자기소개형
+        if has_role:
+            return f"먼저 간단한 자기소개 부탁드립니다. {role} 직무에 지원하신 본인의 강점을 중심으로 말씀해 주세요."
+        return "먼저 간단한 자기소개 부탁드립니다. 본인의 강점을 중심으로 말씀해 주세요."
+    # 지원동기형
+    if has_role:
         return f"먼저 지원동기가 궁금합니다. {role} 직무와 회사에 지원하신 이유를 말씀해 주세요."
     return "먼저 지원동기가 궁금합니다. 이 직무·회사에 지원하신 이유를 말씀해 주세요."
 
@@ -517,7 +549,7 @@ def _section_question_prompt(section, topic, resume_block, asked_block, guidance
 [면접 주제]
 {topic}
 
-{resume_block}{asked_block}{guidance_block}[이번 질문 지시]
+{resume_block}{asked_block}{guidance_block}{_QUESTION_GUARD}[이번 질문 지시]
 지원자의 자기소개서 '{label}' 항목 내용을 바탕으로, 그 항목에 초점을 맞춘
 핵심 면접 질문 1개를 만들어라.
 
@@ -556,7 +588,7 @@ def _category_question_prompt(category, topic, resume_block, asked_block, guidan
 [면접 주제]
 {topic}
 
-{resume_block}{asked_block}{guidance_block}[이번 질문 유형]
+{resume_block}{asked_block}{guidance_block}{_QUESTION_GUARD}[이번 질문 유형]
 '{label}' 유형의 면접 질문 1개를 만들어라. 아래 '씨앗 예시'는 이 유형의 대표
 질문들이다. 이 문구를 그대로 쓰지 말고, 같은 취지를 살리되 지원자의 이력서·
 지원 직무에 맞춰 자연스럽게 구체화한 질문 1개로 새로 써라.
@@ -588,7 +620,7 @@ def _tech_question_prompt(topic, resume_block, asked_block, guidance_block):
 [면접 주제(지원 직무)]
 {topic}
 
-{resume_block}{asked_block}{guidance_block}[이번 질문 지시]
+{resume_block}{asked_block}{guidance_block}{_QUESTION_GUARD}[이번 질문 지시]
 위 '지원 직무'에 핵심이 되는 기술·개념·도구 중 하나를 골라, 지원자가 그것을
 직접 설명하도록 하는 기술 질문 1개를 만들어라.
 - 예) 백엔드 직무 → "REST API와 RPC의 차이를 설명해보세요.",
@@ -625,7 +657,7 @@ def _followup_question_prompt(answer_text, topic, resume_block, asked_block, gui
 {answer_text}
 \"\"\"
 
-{asked_block}{guidance_block}[질문 생성 규칙]
+{asked_block}{guidance_block}{_QUESTION_GUARD}[질문 생성 규칙]
 1. 이미 했던 질문과 의미가 겹치는 질문은 금지
 2. 지나치게 공격적이거나 부정적인 질문은 피할 것
 3. 실제 면접에서 사용 가능한 현실적인 질문일 것

@@ -35,21 +35,23 @@ const COVER_SECTIONS = [
   { key: "aspiration", label: "입사 후 포부", placeholder: "입사 후 이루고 싶은 목표와 성장 계획" },
 ] as const;
 
-// 자소서 주질문에 쓸 항목 순서(첫 질문=지원동기는 별도 고정이므로 여기서 제외).
-// 10문항은 자소서 주질문 2개가 필요하므로 앞에서부터 그만큼 사용한다.
-// '입사 후 포부(aspiration)'는 면접 질문에서 전면 제외하기로 해 주질문 순서에서 뺀다
-// (자소서에 작성은 받되 질문은 만들지 않음).
-const SECTION_ORDER = ["motivation", "strength_weakness", "growth"] as const;
+// 자소서 주질문에 쓸 항목 순서.
+// 첫 질문은 백엔드에서 '지원동기' 또는 '자기소개' 중 무작위로 박제되므로,
+// 본문 주질문에서는 그 두 유형(motivation·intro)을 다시 내지 않는다.
+// → motivation 을 주질문 순서에서 제외(자소서에 작성은 받되 질문은 만들지 않음).
+// '입사 후 포부(aspiration)'도 면접 질문에서 전면 제외하기로 해 순서에서 뺀다.
+const SECTION_ORDER = ["strength_weakness", "growth"] as const;
 
 // 카테고리 풀에서 '랜덤 선택' 대상이 되는 카테고리들(백엔드 CATEGORY_POOL key와 일치).
-// 사용자 명세의 {1 자기소개, 3 경험, 5 프로젝트, 6 인성, 7 상황대처}.
-// 2(지원동기)=첫 질문 고정, 4(직무지식)=tech 슬롯, 8(마지막)=closing 으로 별도 처리.
-const CATEGORY_POOL_KEYS = ["intro", "experience", "project", "personality", "situation"] as const;
+// 사용자 명세의 {3 경험, 5 프로젝트, 6 인성, 7 상황대처}.
+// 1(자기소개)·2(지원동기)=첫 질문에서 둘 중 하나가 이미 나오므로 본문 풀에서 제외,
+// 4(직무지식)=tech 슬롯, 8(마지막)=closing 으로 별도 처리.
+const CATEGORY_POOL_KEYS = ["experience", "project", "personality", "situation"] as const;
 
 // 한 면접의 질문 한 칸(슬롯)이 어떤 종류인지. nextQuestion 이 이 종류를 보고
 // /api/question 에 보낼 인자(section/category/tech)를 정한다.
 type QuestionSlot =
-  | { kind: "first" }                          // 첫 질문(지원동기) — /api/cover-letter 가 생성, 플랜 자리표시용
+  | { kind: "first" }                          // 첫 질문(지원동기 또는 자기소개) — /api/cover-letter 가 생성, 플랜 자리표시용
   | { kind: "section"; section: string }       // 자소서 항목 주질문
   | { kind: "category"; category: string }     // 카테고리 풀 씨앗 질문
   | { kind: "tech" }                           // 직무·전공 지식
@@ -69,8 +71,10 @@ function shuffled<T>(arr: readonly T[]): T[] {
 // 면접 시작 시 1회 호출해 질문 슬롯 플랜(인덱스별 종류)을 만든다.
 // 카테고리 풀 선택은 여기서 한 번 확정해 같은 면접 내내 고정된다.
 //
-// 7문항:  [지원동기, 자소서1, 풀a, 풀b, 직무지식, 꼬리, 마지막말]
-// 10문항: [지원동기, 자소서1, 자소서2, 풀a, 풀b, 풀c, 풀d, 직무지식, 꼬리, 마지막말]
+// 첫 질문은 백엔드에서 '지원동기' 또는 '자기소개' 중 무작위로 박제되며,
+// 이후 본문에서는 그 두 유형이 다시 나오지 않는다(풀·섹션에서 제외).
+// 7문항:  [도입(동기/소개), 자소서1, 풀a, 풀b, 직무지식, 꼬리, 마지막말]
+// 10문항: [도입(동기/소개), 자소서1, 자소서2, 풀a, 풀b, 풀c, 풀d, 직무지식, 꼬리, 마지막말]
 function buildQuestionPlan(count: number): QuestionSlot[] {
   const isTen = count >= 10;
   const sectionCount = isTen ? 2 : 1;        // 자소서 주질문 개수
@@ -96,10 +100,12 @@ const JOB_ROLE_GROUPS = [
   {
     label: "IT/개발",
     roles: [
+      "소프트웨어 개발자",
       "백엔드 개발자",
       "프론트엔드 개발자",
       "풀스택 개발자",
       "모바일 앱 개발자",
+      "임베디드 소프트웨어 개발자",
       "데이터 분석가",
       "데이터 엔지니어",
       "AI/ML 엔지니어",
@@ -1689,6 +1695,10 @@ function PrepScreen({
 
   // 실제 직무명: "기타"면 직접 입력값, 아니면 드롭다운 값
   const jobRole = roleSelect === JOB_CUSTOM ? roleCustom : roleSelect;
+  // 직무 선택은 필수다. 직무가 없으면 면접 주제가 일반 명사 "면접"이 되어,
+  // 기술 질문 모드가 직무를 못 잡고 '면접관으로서 어떤 자질이…'처럼 역할이
+  // 뒤바뀐 메타 질문으로 변질된다(실제 발생). 그래서 시작 전 직무를 강제한다.
+  const jobRoleFilled = jobRole.trim().length > 0;
 
   const allChecked = checked.every(Boolean);
 
@@ -1701,7 +1711,7 @@ function PrepScreen({
   );
   const coverLetterFilled = coverLetterChars >= MIN_COVER_LETTER_CHARS;
 
-  const canStart = allChecked && coverLetterFilled;
+  const canStart = allChecked && coverLetterFilled && jobRoleFilled;
 
   const handleStart = async () => {
     if (!canStart) return;
@@ -1765,7 +1775,7 @@ function PrepScreen({
                 onChange={(e) => setRoleSelect(e.target.value)}
                 className="w-full rounded-xl border border-[hsl(var(--border))] bg-background p-3 text-sm focus:outline-none focus:border-[hsl(var(--primary))]"
               >
-                <option value="">직무를 선택하세요 (선택)</option>
+                <option value="">직무를 선택하세요 (필수)</option>
                 {JOB_ROLE_GROUPS.map((group) => (
                   <optgroup key={group.label} label={group.label}>
                     {group.roles.map((r) => (
@@ -2042,6 +2052,9 @@ function PrepScreen({
               {allChecked && !coverLetterFilled && (
                 <p className="text-xs text-orange-500 mt-1">자기소개서를 작성해야 면접을 시작할 수 있습니다.</p>
               )}
+              {allChecked && coverLetterFilled && !jobRoleFilled && (
+                <p className="text-xs text-orange-500 mt-1">지원 직무를 선택해야 면접을 시작할 수 있습니다.</p>
+              )}
             </div>
 
             <button
@@ -2060,6 +2073,8 @@ function PrepScreen({
                 ? "체크리스트를 모두 완료해 주세요"
                 : !coverLetterFilled
                 ? "자기소개서를 작성해 주세요"
+                : !jobRoleFilled
+                ? "지원 직무를 선택해 주세요"
                 : "면접 시작하기"}
             </button>
           </div>
@@ -2381,17 +2396,17 @@ function InterviewScreen({
               <div className="text-center">
                 <p className="text-white font-semibold text-lg">AI 면접관</p>
                 <p className="text-white/50 text-sm">Kim AI · 인사담당 매니저</p>
-                <div className="flex items-center justify-center gap-2 mt-2.5">
+                <div className="flex items-center justify-center gap-2.5 mt-3.5">
                   <button
                     onClick={replayQuestion}
                     disabled={muted}
-                    className="px-3 py-1.5 rounded-lg bg-white/10 text-white/80 text-xs font-medium hover:bg-white/15 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    className="px-5 py-2.5 rounded-xl bg-white/10 text-white/80 text-sm font-medium hover:bg-white/15 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     🔊 질문 다시 듣기
                   </button>
                   <button
                     onClick={() => setMuted((m) => !m)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                    className={`px-5 py-2.5 rounded-xl text-sm font-medium transition-colors ${
                       muted ? "bg-red-500/20 text-red-300" : "bg-white/10 text-white/60 hover:bg-white/15"
                     }`}
                   >
@@ -2753,6 +2768,66 @@ function ResultScreen({
       ? "양호한 성과입니다."
       : "더 연습해 봐요!";
 
+  // PDF 저장 — 예전엔 window.print()로 브라우저 인쇄창을 띄웠는데, 사용자가 직접
+  // '대상: PDF로 저장'을 골라야 하고 카드가 페이지 경계에서 잘리는 문제가 있었다.
+  // 이제 리포트 영역(#report-print-area)을 캡처해 A4 여러 장으로 잘라 바로 .pdf로 내려받는다.
+  const [pdfStatus, setPdfStatus] = useState<"idle" | "generating">("idle");
+  const handleDownloadPdf = useCallback(async () => {
+    const area = document.getElementById("report-print-area");
+    if (!area || pdfStatus === "generating") return;
+    setPdfStatus("generating");
+    try {
+      // 무거운 라이브러리는 PDF 저장을 누를 때만 로드(메인 번들 비대화 방지).
+      const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+        import("html2canvas"),
+        import("jspdf"),
+      ]);
+      const canvas = await html2canvas(area, {
+        scale: 2, // 선명도 확보(레티나급)
+        backgroundColor: "#ffffff",
+        useCORS: true,
+        logging: false,
+        windowWidth: area.scrollWidth,
+      });
+
+      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+      // 캔버스(px) 1장의 폭을 A4 폭에 맞추고, 그 비율로 세로를 환산해
+      // A4 한 장 높이만큼씩 잘라 여러 페이지에 나눠 붙인다(내용 잘림 방지).
+      const pxPerMm = canvas.width / pageW;
+      const pageHpx = pageH * pxPerMm;
+      const totalPages = Math.ceil(canvas.height / pageHpx);
+
+      for (let page = 0; page < totalPages; page++) {
+        const sliceHpx = Math.min(pageHpx, canvas.height - page * pageHpx);
+        const slice = document.createElement("canvas");
+        slice.width = canvas.width;
+        slice.height = sliceHpx;
+        const ctx = slice.getContext("2d");
+        if (!ctx) continue;
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, slice.width, slice.height);
+        ctx.drawImage(
+          canvas,
+          0, page * pageHpx, canvas.width, sliceHpx,
+          0, 0, canvas.width, sliceHpx,
+        );
+        const imgData = slice.toDataURL("image/jpeg", 0.92);
+        if (page > 0) pdf.addPage();
+        pdf.addImage(imgData, "JPEG", 0, 0, pageW, sliceHpx / pxPerMm);
+      }
+
+      const stamp = new Date().toISOString().slice(0, 10);
+      pdf.save(`AI모의면접_리포트_${stamp}.pdf`);
+    } catch (err) {
+      console.error("PDF 저장 실패", err);
+      alert("PDF 저장에 실패했습니다. 잠시 후 다시 시도해 주세요.");
+    } finally {
+      setPdfStatus("idle");
+    }
+  }, [pdfStatus]);
+
   return (
     <div className="min-h-screen flex flex-col screen-enter">
       <nav className="print-hide navy-gradient px-3 sm:px-6 py-4 flex items-center justify-between gap-2 shadow-lg">
@@ -2983,13 +3058,14 @@ function ResultScreen({
                         ? "기록 저장 다시 시도"
                         : "기록 저장"}
                     </button>
-                    {/* PDF 저장 — 브라우저 인쇄 대화상자에서 '대상: PDF로 저장' 선택. */}
+                    {/* PDF 저장 — 리포트 영역을 캡처해 A4로 잘라 바로 .pdf로 내려받는다(인쇄창 없이). */}
                     <button
                       data-testid="button-download-report"
-                      onClick={() => window.print()}
-                      className="px-5 py-2.5 border border-[hsl(var(--border))] text-[hsl(var(--primary))] text-sm font-semibold rounded-xl hover:bg-[hsl(var(--secondary))] transition-colors"
+                      onClick={handleDownloadPdf}
+                      disabled={pdfStatus === "generating"}
+                      className="px-5 py-2.5 border border-[hsl(var(--border))] text-[hsl(var(--primary))] text-sm font-semibold rounded-xl hover:bg-[hsl(var(--secondary))] transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                     >
-                      PDF 저장
+                      {pdfStatus === "generating" ? "PDF 생성 중…" : "PDF 저장"}
                     </button>
                     <button
                       data-testid="button-retry"
