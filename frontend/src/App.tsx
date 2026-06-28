@@ -3067,8 +3067,11 @@ function ResultScreen({
     setPdfStatus("generating");
     try {
       // 무거운 라이브러리는 PDF 저장을 누를 때만 로드(메인 번들 비대화 방지).
+      // html2canvas-pro 를 쓴다 — 원본 html2canvas(1.4.1)는 Tailwind v4 가
+      // 내보내는 oklch() 색상을 파싱하지 못해 캡처 중 예외로 터졌다(=PDF 저장 실패).
+      // pro 포크는 oklch/lab/color-mix 를 지원하는 드롭인 대체재다.
       const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
-        import("html2canvas"),
+        import("html2canvas-pro"),
         import("jspdf"),
       ]);
       const canvas = await html2canvas(area, {
@@ -3110,8 +3113,18 @@ function ResultScreen({
       const stamp = new Date().toISOString().slice(0, 10);
       pdf.save(`AI모의면접_리포트_${stamp}.pdf`);
     } catch (err) {
+      // 진짜 원인을 콘솔에 남겨 진단을 돕고, 사용자에겐 원인별로 다른 안내를 준다.
       console.error("PDF 저장 실패", err);
-      alert("PDF 저장에 실패했습니다. 잠시 후 다시 시도해 주세요.");
+      const msg = String((err as Error)?.message ?? err);
+      // 동적 import 실패(청크 로드 오류) — 보통 새 배포 직후 캐시가 어긋났거나
+      // 네트워크 단절. 새로고침하면 해결되는 경우가 많아 그렇게 안내한다.
+      const isChunkLoadError =
+        /import|chunk|dynamically imported|Failed to fetch/i.test(msg);
+      alert(
+        isChunkLoadError
+          ? "PDF 모듈을 불러오지 못했습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요."
+          : "PDF 저장에 실패했습니다. 다른 브라우저(최신 Chrome 권장)에서 다시 시도해 주세요. 문제가 계속되면 '기록 저장'으로 결과를 보관할 수 있습니다.",
+      );
     } finally {
       setPdfStatus("idle");
     }
