@@ -1173,6 +1173,176 @@ function ResultShowcase() {
   );
 }
 
+// 네비바 오른쪽 계정 칩 → 클릭하면 드롭다운(내 면접 기록 / 로그아웃 / 회원 탈퇴).
+// App.tsx 는 UI 컴포넌트를 직접 손으로 그리는 스타일이라, Radix 대신 가벼운
+// 자체 드롭다운으로 구현한다(바깥 클릭·Esc 로 닫힘).
+function AccountMenu({
+  userName,
+  onHistory,
+  onLogout,
+  onDeleteAccount,
+}: {
+  userName: string;
+  onHistory: () => void;
+  onLogout: () => void;
+  onDeleteAccount: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  // 메뉴 항목 버튼들(키보드 화살표 이동·열릴 때 첫 항목 포커스에 사용).
+  const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  // 바깥 클릭·Esc 로 닫기. 열려 있을 때만 리스너를 단다.
+  // pointerdown 을 쓰면 마우스·터치를 모두 일관되게 처리한다(모바일에서 mousedown
+  // 이 안 떠 메뉴가 안 닫히는 문제 방지).
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setOpen(false);
+        triggerRef.current?.focus(); // 닫은 뒤 포커스를 트리거로 되돌린다.
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  // 열릴 때 첫 메뉴 항목으로 포커스를 옮긴다(키보드/스크린리더 사용성).
+  useEffect(() => {
+    if (open) itemRefs.current[0]?.focus();
+  }, [open]);
+
+  // 메뉴 항목 클릭 시 먼저 닫고 동작을 실행한다.
+  const run = (fn: () => void) => () => {
+    setOpen(false);
+    fn();
+  };
+
+  // 메뉴 안에서 위/아래 화살표로 항목 간 이동(roving focus). Home/End 지원.
+  const onMenuKeyDown = (e: React.KeyboardEvent) => {
+    const items = itemRefs.current.filter(Boolean) as HTMLButtonElement[];
+    if (items.length === 0) return;
+    const idx = items.indexOf(document.activeElement as HTMLButtonElement);
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      items[(idx + 1 + items.length) % items.length]?.focus();
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      items[(idx - 1 + items.length) % items.length]?.focus();
+    } else if (e.key === "Home") {
+      e.preventDefault();
+      items[0]?.focus();
+    } else if (e.key === "End") {
+      e.preventDefault();
+      items[items.length - 1]?.focus();
+    }
+  };
+
+  return (
+    <div className="relative" ref={menuRef}>
+      <button
+        type="button"
+        ref={triggerRef}
+        data-testid="button-account-menu"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={`${userName} 계정 메뉴 — 면접 기록·로그아웃·회원 탈퇴`}
+        className="flex items-center gap-2 pl-1.5 pr-2 sm:pr-2.5 py-1.5 bg-white/10 rounded-lg hover:bg-white/15 transition-colors"
+      >
+        <div className="w-6 h-6 rounded-full bg-[hsl(var(--accent))] flex items-center justify-center text-white text-xs font-bold shrink-0">
+          {userName.charAt(0).toUpperCase()}
+        </div>
+        <span className="text-white/90 text-sm font-medium max-w-[7rem] truncate">{userName}</span>
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          className={`text-white/70 transition-transform duration-150 ${open ? "rotate-180" : ""}`}
+        >
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
+
+      {open && (
+        <div
+          role="menu"
+          aria-label="계정 메뉴"
+          onKeyDown={onMenuKeyDown}
+          className="absolute right-0 mt-2 w-52 max-w-[calc(100vw-1rem)] rounded-xl bg-white shadow-xl border border-[hsl(var(--border))] py-1.5 z-50 screen-enter"
+        >
+          {/* 로그인한 계정 표시 */}
+          <div className="px-3.5 py-2 border-b border-[hsl(var(--border))] mb-1">
+            <p className="text-[11px] text-muted-foreground">로그인 계정</p>
+            <p className="text-sm font-semibold text-[hsl(var(--primary))] truncate">{userName}</p>
+          </div>
+
+          <button
+            type="button"
+            role="menuitem"
+            ref={(el) => (itemRefs.current[0] = el)}
+            data-testid="menu-history"
+            onClick={run(onHistory)}
+            className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-sm text-[hsl(var(--primary))] hover:bg-[hsl(var(--secondary))] focus:bg-[hsl(var(--secondary))] focus:outline-none transition-colors"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M3 3v18h18" />
+              <path d="m19 9-5 5-4-4-3 3" />
+            </svg>
+            내 면접 기록
+          </button>
+
+          <button
+            type="button"
+            role="menuitem"
+            ref={(el) => (itemRefs.current[1] = el)}
+            data-testid="menu-logout"
+            onClick={run(onLogout)}
+            className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-sm text-[hsl(var(--primary))] hover:bg-[hsl(var(--secondary))] focus:bg-[hsl(var(--secondary))] focus:outline-none transition-colors"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+              <polyline points="16 17 21 12 16 7" />
+              <line x1="21" y1="12" x2="9" y2="12" />
+            </svg>
+            로그아웃
+          </button>
+
+          <div className="my-1 border-t border-[hsl(var(--border))]" />
+
+          <button
+            type="button"
+            role="menuitem"
+            ref={(el) => (itemRefs.current[2] = el)}
+            data-testid="menu-delete-account"
+            onClick={run(onDeleteAccount)}
+            className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-sm text-red-600 hover:bg-red-100 hover:text-red-700 focus:bg-red-100 focus:text-red-700 focus:outline-none transition-colors"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <polyline points="3 6 5 6 21 6" />
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+            </svg>
+            회원 탈퇴
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function HomeScreen({
   isLoggedIn,
   userName,
@@ -1204,42 +1374,14 @@ function HomeScreen({
           <span className="text-white font-bold text-base tracking-tight truncate">InterviewAI</span>
         </div>
 
-        <div className="hidden md:flex items-center gap-6 text-sm text-white/70">
-          {isLoggedIn && (
-            <span
-              data-testid="link-history"
-              onClick={onHistory}
-              className="hover:text-white cursor-pointer transition-colors"
-            >
-              내 면접 기록
-            </span>
-          )}
-        </div>
-
         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           {isLoggedIn ? (
-            <>
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-white/10 rounded-lg">
-                <div className="w-6 h-6 rounded-full bg-[hsl(var(--accent))] flex items-center justify-center text-white text-xs font-bold">
-                  {userName.charAt(0).toUpperCase()}
-                </div>
-                <span className="text-white/90 text-sm font-medium">{userName}</span>
-              </div>
-              <button
-                data-testid="button-logout"
-                onClick={onLogout}
-                className="px-2.5 sm:px-4 py-2.5 text-white/70 text-sm sm:text-base font-medium whitespace-nowrap hover:text-white transition-colors"
-              >
-                로그아웃
-              </button>
-              <button
-                data-testid="button-delete-account"
-                onClick={onDeleteAccount}
-                className="px-2.5 sm:px-4 py-2.5 text-white/50 text-sm sm:text-base whitespace-nowrap hover:text-red-300 transition-colors"
-              >
-                회원 탈퇴
-              </button>
-            </>
+            <AccountMenu
+              userName={userName}
+              onHistory={onHistory}
+              onLogout={onLogout}
+              onDeleteAccount={onDeleteAccount}
+            />
           ) : (
             <>
               <button
